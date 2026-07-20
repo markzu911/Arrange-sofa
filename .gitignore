@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+.env.local
+.env.*.local
+vite-dev.log
+vite-dev.err.log
+trial-server.log
+trial-server.err.log
+*.tsbuildinfo
+gemini-debug.json
