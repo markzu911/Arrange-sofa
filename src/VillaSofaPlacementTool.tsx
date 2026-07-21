@@ -119,7 +119,7 @@ export function VillaSofaPlacementTool() {
   const [compareValue, setCompareValue] = useState(50);
   const [integral, setIntegral] = useState(TOOL_COST * 9);
   const [toolCost, setToolCost] = useState(TOOL_COST);
-  const [status, setStatus] = useState("独立试验模式：暂不连接主平台积分与图片入库");
+  const [status, setStatus] = useState("准备就绪，请上传房间照片开始试摆");
   const [error, setError] = useState("");
   const [isLaunching, setIsLaunching] = useState(false);
   const [isAnalyzingRoom, setIsAnalyzingRoom] = useState(false);
@@ -160,7 +160,7 @@ export function VillaSofaPlacementTool() {
         setIntegral(state.user.integral);
         setToolCost(state.tool.integral);
       })
-      .catch(() => active && setStatus("未连接到主平台，当前为本地演示数据"))
+      .catch(() => active && setStatus("暂时无法读取积分信息，请刷新后重试"))
       .finally(() => active && setIsLaunching(false));
 
     return () => {
@@ -198,7 +198,7 @@ export function VillaSofaPlacementTool() {
         eyebrow: "第 4 步",
         title: "正在生成试摆效果",
         desc: "我会按已确认的方案生成图片，完成后自动进入结果页。",
-        hint: "多视角会一次完成，当前试验模式不调用平台扣费。"
+        hint: "多视角会一次完成，请保持页面打开直到生成结束。"
       };
     }
     return {
@@ -395,7 +395,7 @@ export function VillaSofaPlacementTool() {
       setResults(generated);
       setSelectedResult(0);
       setGuidedStep("result");
-      setStatus(isStandaloneTrial ? `试验模式：已生成 ${generated.length} 个视角结果，未调用平台扣费和入库` : `已生成 ${generated.length} 个视角结果`);
+      setStatus(`已生成 ${generated.length} 个视角结果`);
       addChatMessage({ role: "assistant", text: `试摆效果已经生成，共 ${generated.length} 个视角。您可以在下方切换视角、拖动对比滑块或下载图片。` });
 
       if (!isStandaloneTrial) {
@@ -436,7 +436,7 @@ export function VillaSofaPlacementTool() {
   }
 
   async function uploadGeneratedResults(generated: GeneratedImageResult[]) {
-    setStatus("生成完成，正在扣费后的结果图入库...");
+    setStatus("生成完成，正在保存结果图...");
     const settled = await Promise.all(generated.map(async (item, index) => {
       try {
         const blob = await compressDataUrlToBlob(item.imageUrl);
@@ -453,14 +453,14 @@ export function VillaSofaPlacementTool() {
           ...result,
           uploadStatus: "failed"
         } : result));
-        return { ok: false, message: userFacingError(err, "结果图入库失败") };
+        return { ok: false, message: userFacingError(err, "结果图保存失败") };
       }
     }));
 
     const failed = settled.filter((item) => !item.ok);
     setStatus(failed.length
-      ? `生成已完成并已扣除积分，但有 ${failed.length} 张结果图入库失败，请稍后重试或下载保存`
-      : "生成已完成，积分已扣除，结果图已保存到我的图片");
+      ? `生成已完成，但有 ${failed.length} 张结果图保存失败，请稍后重试或下载保存`
+      : "生成已完成，结果图已保存到我的图片");
   }
 
   function updateAnalysisField<K extends keyof SceneAnalysis>(field: K, value: SceneAnalysis[K]) {
@@ -499,7 +499,7 @@ export function VillaSofaPlacementTool() {
     setAgentFlowStarted(false);
     setChatMessages(initialChatMessages);
     setError("");
-    setStatus("独立试验模式：暂不连接主平台积分与图片入库");
+    setStatus("准备就绪，请上传房间照片开始试摆");
   }
 
   const currentStepContent = (

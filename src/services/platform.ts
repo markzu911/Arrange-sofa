@@ -60,7 +60,7 @@ export async function launchTool(context: PlatformContext): Promise<LaunchState>
   }
 
   return {
-    user: { name: "演示用户", enterprise: "演示空间", integral: 90 },
+    user: { name: "当前用户", enterprise: "当前企业", integral: 90 },
     tool: { name: TOOL_NAME, integral: TOOL_COST }
   };
 }
@@ -143,7 +143,7 @@ export async function persistResultImage(
 
   const savedToRecords = commit.image?.savedToRecords ?? commit.savedToRecords;
   if (!commit.success || savedToRecords !== true) {
-    throw new Error(commit.message || "结果图入库失败");
+    throw new Error(commit.message || "结果图保存失败");
   }
 
   return {
