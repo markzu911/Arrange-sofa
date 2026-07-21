@@ -347,8 +347,8 @@ export function VillaSofaPlacementTool() {
         setSofaForegroundImage(null);
         setClearedRoomImage(null);
         addChatMessage({ role: "user", text: "已上传沙发照片", image });
-        addChatMessage({ role: "assistant", text: "沙发照片已收到，我正在识别款式、材质、颜色和比例。" });
-        await autoAnalyzeSofa(image);
+        setStatus("沙发照片已收到，可继续补充细节图，确认后生成试摆方案");
+        addChatMessage({ role: "assistant", text: "沙发照片已收到。您可以继续补充扶手、靠背、材质或纹理细节图，确认后我再生成试摆方案。" });
       }
     } catch (err) {
       setError(userFacingError(err, "上传失败"));
@@ -661,6 +661,10 @@ export function VillaSofaPlacementTool() {
             images={sofaReferenceImages}
             onFiles={(files) => files.forEach((file) => handleUpload("sofa-reference", file))}
           />
+          <button className={styles.primaryButton} onClick={() => sofaImage && autoAnalyzeSofa(sofaImage)} disabled={!sofaImage || isAnalyzingSofa}>
+            {isAnalyzingSofa ? <Loader2 className={styles.spin} size={18} /> : <CheckCircle2 size={18} />}
+            确认沙发图片，生成方案
+          </button>
         </div>
       )}
 
