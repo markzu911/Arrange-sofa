@@ -313,8 +313,8 @@ export function VillaSofaPlacementTool() {
     try {
       const image = await compressImage(
         file,
-        kind === "room-reference" ? 900 : undefined,
-        kind === "room-reference" ? 0.68 : undefined,
+        kind === "room-reference" || kind === "sofa-reference" ? 900 : undefined,
+        kind === "room-reference" || kind === "sofa-reference" ? 0.68 : undefined,
         kind === "room-reference" || kind === "sofa-reference" ? GEMINI_REFERENCE_TARGET_BYTES : GEMINI_IMAGE_TARGET_BYTES
       );
       setResults([]);
@@ -326,13 +326,13 @@ export function VillaSofaPlacementTool() {
         setSofaImage(null);
         setSofaReferenceImages([]);
         setSofaForegroundImage(null);
-      setClearedRoomImage(null);
-      setAnalysis(null);
-      setReviewSubstep("plan");
-      setGuidedStep("room");
+        setClearedRoomImage(null);
+        setAnalysis(null);
+        setReviewSubstep("plan");
+        setGuidedStep("room");
         addChatMessage({ role: "user", text: "已上传房间照片", image });
-        addChatMessage({ role: "assistant", text: "房间照片已收到，我正在分析空间尺度、光线和透视关系。" });
-        await autoAnalyzeRoom(image);
+        setStatus("房间照片已收到，可继续补充房间角度，确认后进入沙发上传");
+        addChatMessage({ role: "assistant", text: "房间照片已收到。您可以继续补充左右侧、斜角或窗边视角，确认后我再解析空间并进入沙发上传。" });
       } else if (kind === "room-reference") {
         setRoomReferenceImages((current) => current.length >= 5 ? current : [...current, image]);
         setStatus("已加入空间补充角度，后续分析和生成会一并参考");
@@ -582,8 +582,8 @@ export function VillaSofaPlacementTool() {
 
   function canVisitStep(step: GuidedStep) {
     if (step === "room") return !isGenerating;
-    if (step === "sofa") return !isGenerating && (useVirtualRoom || Boolean(roomImage));
-    if (step === "review") return !isGenerating && Boolean(analysis);
+    if (step === "sofa") return !isGenerating && (useVirtualRoom || Boolean(analysis));
+    if (step === "review") return !isGenerating && Boolean(analysis && sofaImage && sofaForegroundImage && (useVirtualRoom || clearedRoomImage));
     if (step === "result") return !isGenerating && results.length > 0;
     return false;
   }
@@ -620,14 +620,24 @@ export function VillaSofaPlacementTool() {
     <>
       {guidedStep === "room" && (
         <div className={styles.roomEntryLayout}>
-          <UploadStep
-            kind="room"
-            image={roomImage}
-            busy={isAnalyzingRoom}
-            title="上传房间照片"
-            description="上传后自动解析空间，不需要手动点击下一步。"
-            onFile={(file) => handleUpload("room", file)}
-          />
+          <div className={styles.uploadStack}>
+            <UploadStep
+              kind="room"
+              image={roomImage}
+              busy={isAnalyzingRoom}
+              title="上传房间照片"
+              description="上传后可补充角度，点击确认后再进入下一步。"
+              onFile={(file) => handleUpload("room", file)}
+            />
+            <RoomReferenceUploader
+              images={roomReferenceImages}
+              onFiles={(files) => files.forEach((file) => handleUpload("room-reference", file))}
+            />
+            <button className={styles.primaryButton} onClick={() => roomImage && autoAnalyzeRoom(roomImage)} disabled={!roomImage || isAnalyzingRoom}>
+              {isAnalyzingRoom ? <Loader2 className={styles.spin} size={18} /> : <CheckCircle2 size={18} />}
+              确认房间图片，进入沙发上传
+            </button>
+          </div>
           <VirtualRoomStarter
             selectedStyle={settings.virtualRoomStyle}
             onStyleChange={(virtualRoomStyle) => setSettings((current) => ({ ...current, virtualRoomStyle }))}
@@ -641,13 +651,7 @@ export function VillaSofaPlacementTool() {
           {useVirtualRoom ? (
             <VirtualRoomSummary selectedStyle={settings.virtualRoomStyle} />
           ) : (
-            <>
-              <PreviewCard title="房间已解析" image={roomImage} loading={isAnalyzingRoom} />
-              <RoomReferenceUploader
-                images={roomReferenceImages}
-                onFiles={(files) => files.forEach((file) => handleUpload("room-reference", file))}
-              />
-            </>
+            <PreviewCard title="房间已解析" image={roomImage} loading={isAnalyzingRoom} />
           )}
           <UploadStep
             kind="sofa"

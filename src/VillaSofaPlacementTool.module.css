@@ -533,6 +533,12 @@
   min-width: 0;
 }
 
+.uploadStack {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
 .virtualRoomPanel {
   display: grid;
   align-content: start;
