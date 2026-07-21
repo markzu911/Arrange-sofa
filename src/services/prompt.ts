@@ -31,7 +31,7 @@ function buildHumanModelPrompt(settings: PlacementSettings): string {
 export function buildAnalysisPrompt(extraContext = "", extraPrompt: string[] = [], userRequirements = ""): string {
   return [
     sofaPlacementSystemPrompt,
-    "输入图片顺序为：第一张是房间主图；如有后续房间图，它们是同一空间的补充角度；最后一张是沙发参考图。请综合所有房间角度分析空间，再识别沙发，返回严格 JSON，不要输出 Markdown。",
+    "输入图片顺序为：第一张是房间主图；如有后续房间图，它们是同一空间的补充角度；随后是沙发主图；最后若还有图片，它们是同一张沙发的细节补充图。请综合所有房间角度分析空间，再以沙发主图锁定整体轮廓，用细节图补充材质、纹理、缝线、扶手、靠背和局部设计，返回严格 JSON，不要输出 Markdown。",
     "JSON 字段必须严格为：roomSummary, sofaSummary, sofaIdentity, lighting, perspective, placementAdvice, constraints, placementPlan。sofaIdentity 必须是对象，字段严格为 seatCount, silhouette, armrest, backrest, cushions, material, color, details；前七项为中文字符串，details 为中文字符串数组。",
     "placementPlan 必须是对象，字段严格为：summary, placement, facing, scale, preserve, remove, avoid, rationale, candidates, selectedCandidateId。其中 summary、placement、facing、scale 为中文字符串；preserve、remove、avoid、rationale 为中文字符串数组。",
     "candidates 必须包含 2 到 3 个候选摆位对象。每个对象字段严格为：id, label, placement, facing, scale, score, reasons, blocksWalkway, conflictsWithPreservedItems, violatesUserRequirements。score 为 0 到 1 的数字；reasons 为字符串数组；后三项为布尔值。明确标记会阻塞通道、碰撞需保留家具或违背用户要求的候选方案。selectedCandidateId 填写最推荐且不违反硬约束的候选 id。",
@@ -62,7 +62,7 @@ export function buildGenerationPrompt(
 
   return [
     sofaPlacementSystemPrompt,
-    "这是严格的图片编辑/合成任务，不是重新描述房间，也不是返回原图。第一张输入图是待编辑的房间主图；如有后续房间图，它们是同一空间的补充角度，只用于校验空间结构、家具关系和遮挡；最后一张输入图是必须放入房间的目标沙发。",
+    "这是严格的图片编辑/合成任务，不是重新描述房间，也不是返回原图。第一张输入图是待编辑的房间主图；如有后续房间图，它们是同一空间的补充角度，只用于校验空间结构、家具关系和遮挡；随后一张是必须放入房间的目标沙发主图；最后若还有图片，它们是同一张沙发的细节补充图，只用于补充材质、纹理、缝线和局部造型，不得改变主图锁定的整体轮廓和比例。",
     "最终图必须与原房间图有清楚可见的变化：目标沙发必须出现在指定位置、尺度和朝向上。若原房间已有不符合方案的沙发，仅在用户额外要求明确允许时才移除或替换它；绝不能原样返回房间图。",
     `摆放位置：${positionLabel}`,
     `生成视角：${perspectiveLabels[perspective as keyof typeof perspectiveLabels] ?? perspective}`,
@@ -75,7 +75,7 @@ export function buildGenerationPrompt(
       ? `用户额外要求（最高优先级，必须以用户想法为准并逐项执行）：${settings.notes}`
       : "用户没有额外要求时，请自行选择最适合该房间的摆放位置、朝向与尺度。",
     "空间执行规则：准确理解用户指定的相对位置、朝向、需要保留或移除的家具、通道和遮挡关系。只移除用户在额外要求中明确允许移除或替换的物品；没有明确要求时，保留房间内其他家具与装饰。",
-    "目标沙发身份锁定：最后一张输入图中的沙发是唯一允许放入的目标主体。必须保留它的款式、颜色、材质、扶手、靠背、坐垫与整体轮廓；不得仅改变场景内原沙发的颜色、材质或局部形状来冒充目标沙发。",
+    "目标沙发身份锁定：沙发主图中的沙发是唯一允许放入的目标主体。必须保留它的款式、颜色、材质、扶手、靠背、坐垫与整体轮廓；细节补充图只能用于增强材质、纹理、缝线、拉扣、扶手、靠背和局部设计理解，不得推翻主图的整体轮廓、座位数和比例；不得仅改变场景内原沙发的颜色、材质或局部形状来冒充目标沙发。",
     `目标沙发身份卡（必须逐项执行）：${JSON.stringify(analysis.sofaIdentity)}`,
     "沙发特征必须逐项一致：整体轮廓与比例、座位数量、扶手外形、靠背分段、坐垫数量与分区、沙发脚、可见缝线/拉扣/褶皱、主色、材质纹理和可见装饰。不得用风格相似的沙发替代，不得改变结构、座位数或比例，不得新增、隐藏或并存另一张沙发。生成前逐项核验上述特征；任一特征无法保持时，视为生成失败。",
     `已确认试摆计划（必须执行，除非与用户更高优先级要求冲突）：${JSON.stringify(analysis.placementPlan)}`,
@@ -103,9 +103,9 @@ export function buildCameraVariationPrompt(
     close: "近景与远景的差异必须非常明显：沙发主体面积至少达到远景的 3 倍，画面重点从房间展示转为产品展示，远端空间大部分不可见。"
   };
   return [
-    "这是锁定布局后的虚拟相机重构任务。第一张输入图是已经确认正确的远景试摆主图；它是唯一的空间与布局事实来源。第二张输入图仅用于核验目标沙发的款式身份。",
+    "这是锁定布局后的虚拟相机重构任务。第一张输入图是已经确认正确的远景试摆主图；它是唯一的空间与布局事实来源。第二张输入图是目标沙发主图；后续若还有图片，是同一张沙发的细节补充图，仅用于核验材质、纹理和局部设计。",
     "绝对禁止改变第一张图中的沙发位置、朝向、大小、款式、颜色、材质、房间结构、家具、装饰、光影、遮挡关系和人造物。不得重新规划摆位，不得添加或删除任何家具。",
-    "沙发身份绝对锁定：主图中的目标沙发必须始终对应最后一张沙发参考图，而不是任何相似款或场景原有沙发的改色版本。必须保持整体轮廓与比例、座位数量、扶手外形、靠背分段、坐垫数量与分区、沙发脚、可见缝线/拉扣/褶皱、主色、材质纹理和可见装饰完全一致。任何一项变化均视为失败。",
+    "沙发身份绝对锁定：主图中的目标沙发必须始终对应沙发主图，而不是任何相似款或场景原有沙发的改色版本。细节补充图只能加强材质纹理和局部细节，不得改变主图锁定的整体轮廓与比例。必须保持座位数量、扶手外形、靠背分段、坐垫数量与分区、沙发脚、可见缝线/拉扣/褶皱、主色、材质纹理和可见装饰完全一致。任何一项变化均视为失败。",
     `本次必须保持的沙发身份卡：${JSON.stringify(analysis.sofaIdentity)}`,
     buildHumanModelPrompt(settings),
     "只允许改变虚拟相机的位置、横向方位、朝向、拍摄距离和焦距，产生与主图属于同一时刻、同一房间、同一试摆方案的真实摄影镜头。相机机位不得与主图重合，朝向不得完全一致；必须保留目标沙发相对墙面、窗户、茶几和通道的位置关系。",

@@ -145,6 +145,7 @@ export function VillaSofaPlacementTool() {
   const [roomReferenceImages, setRoomReferenceImages] = useState<UploadedImage[]>([]);
   const [useVirtualRoom, setUseVirtualRoom] = useState(false);
   const [sofaImage, setSofaImage] = useState<UploadedImage | null>(null);
+  const [sofaReferenceImages, setSofaReferenceImages] = useState<UploadedImage[]>([]);
   const [sofaForegroundImage, setSofaForegroundImage] = useState<UploadedImage | null>(null);
   const [clearedRoomImage, setClearedRoomImage] = useState<UploadedImage | null>(null);
   const [settings, setSettings] = useState<PlacementSettings>(defaultSettings);
@@ -305,7 +306,7 @@ export function VillaSofaPlacementTool() {
     addChatMessage({ role: "assistant", text: `已切换为 ${styleLabel} 虚拟房间模式。请上传沙发照片，后续会直接生成虚拟客厅效果图。` });
   }
 
-  async function handleUpload(kind: "room" | "sofa" | "room-reference", file?: File) {
+  async function handleUpload(kind: "room" | "sofa" | "room-reference" | "sofa-reference", file?: File) {
     if (!file) return;
     setError("");
     setStatus("正在压缩图片...");
@@ -314,7 +315,7 @@ export function VillaSofaPlacementTool() {
         file,
         kind === "room-reference" ? 900 : undefined,
         kind === "room-reference" ? 0.68 : undefined,
-        kind === "room-reference" ? GEMINI_REFERENCE_TARGET_BYTES : GEMINI_IMAGE_TARGET_BYTES
+        kind === "room-reference" || kind === "sofa-reference" ? GEMINI_REFERENCE_TARGET_BYTES : GEMINI_IMAGE_TARGET_BYTES
       );
       setResults([]);
       if (kind === "room") {
@@ -323,6 +324,7 @@ export function VillaSofaPlacementTool() {
         setRoomImage(image);
         setRoomReferenceImages([]);
         setSofaImage(null);
+        setSofaReferenceImages([]);
         setSofaForegroundImage(null);
       setClearedRoomImage(null);
       setAnalysis(null);
@@ -335,8 +337,13 @@ export function VillaSofaPlacementTool() {
         setRoomReferenceImages((current) => current.length >= 5 ? current : [...current, image]);
         setStatus("已加入空间补充角度，后续分析和生成会一并参考");
         addChatMessage({ role: "user", text: "已补充一张房间不同角度照片", image });
+      } else if (kind === "sofa-reference") {
+        setSofaReferenceImages((current) => current.length >= 4 ? current : [...current, image]);
+        setStatus("已加入沙发细节图，重新上传沙发或重新规划时会一并参考");
+        addChatMessage({ role: "user", text: "已补充一张沙发细节图", image });
       } else {
         setSofaImage(image);
+        setSofaReferenceImages([]);
         setSofaForegroundImage(null);
         setClearedRoomImage(null);
         addChatMessage({ role: "user", text: "已上传沙发照片", image });
@@ -356,7 +363,7 @@ export function VillaSofaPlacementTool() {
       if (!isStandaloneTrial) {
         await verifyIntegral(platform);
       }
-      const nextAnalysis = await analyzeScene(nextRoomImage, null, roomReferenceImages, settings.model, platform.context, platform.prompt, settings.notes);
+      const nextAnalysis = await analyzeScene(nextRoomImage, null, roomReferenceImages, [], settings.model, platform.context, platform.prompt, settings.notes);
       setAnalysis({
         ...nextAnalysis,
         sofaSummary: "等待上传沙发照片后补充沙发分析。"
@@ -408,7 +415,7 @@ export function VillaSofaPlacementTool() {
       if (!isStandaloneTrial) {
         await verifyIntegral(platform);
       }
-      const nextAnalysis = await analyzeScene(roomImage, nextSofaImage, roomReferenceImages, settings.model, platform.context, platform.prompt, settings.notes);
+      const nextAnalysis = await analyzeScene(roomImage, nextSofaImage, roomReferenceImages, sofaReferenceImages, settings.model, platform.context, platform.prompt, settings.notes);
       setAnalysis(nextAnalysis);
       setStatus("正在提取并核验沙发前景...");
       const foreground = await extractSofaForeground(nextSofaImage, settings);
@@ -450,8 +457,8 @@ export function VillaSofaPlacementTool() {
         ? { ...settings, notes: `${settings.notes}\n质检纠正要求：${correctionPrompt}`.trim() }
         : settings;
       const images = useVirtualRoom
-        ? await generateVirtualRoomImages(sofaImage, analysis, generationSettings, platform.context, platform.prompt)
-        : await generatePlacementImages(clearedRoomImage as UploadedImage, sofaForegroundImage as UploadedImage, roomReferenceImages, analysis, generationSettings, platform.context, platform.prompt);
+        ? await generateVirtualRoomImages(sofaImage, sofaReferenceImages, analysis, generationSettings, platform.context, platform.prompt)
+        : await generatePlacementImages(clearedRoomImage as UploadedImage, sofaForegroundImage as UploadedImage, roomReferenceImages, sofaReferenceImages, analysis, generationSettings, platform.context, platform.prompt);
       if (images.length !== generationSettings.perspectives.length) {
         throw new Error(`视角结果不完整：已选择 ${generationSettings.perspectives.length} 个视角，但仅生成 ${images.length} 张图片。请重新生成。`);
       }
@@ -487,6 +494,7 @@ export function VillaSofaPlacementTool() {
             roomImage,
             sofaImage,
             roomReferenceImages,
+            sofaReferenceImages,
             item.imageUrl,
             analysis,
             generationSettings,
@@ -597,6 +605,7 @@ export function VillaSofaPlacementTool() {
     setRoomImage(null);
     setRoomReferenceImages([]);
     setSofaImage(null);
+    setSofaReferenceImages([]);
     setSofaForegroundImage(null);
     setClearedRoomImage(null);
     setAnalysis(null);
@@ -647,6 +656,10 @@ export function VillaSofaPlacementTool() {
             title="上传沙发照片"
             description="上传后自动合并房间和沙发分析，生成试摆建议。"
             onFile={(file) => handleUpload("sofa", file)}
+          />
+          <SofaReferenceUploader
+            images={sofaReferenceImages}
+            onFiles={(files) => files.forEach((file) => handleUpload("sofa-reference", file))}
           />
         </div>
       )}
@@ -1002,6 +1015,41 @@ function RoomReferenceUploader({
         <label className={styles.referenceUploadButton}>
           <ImagePlus size={17} />
           添加补充照片（还可添加 {remaining} 张）
+          <input
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={(event) => onFiles(Array.from(event.target.files ?? []).slice(0, remaining))}
+          />
+        </label>
+      )}
+    </section>
+  );
+}
+
+function SofaReferenceUploader({
+  images,
+  onFiles
+}: {
+  images: UploadedImage[];
+  onFiles: (files: File[]) => void;
+}) {
+  const remaining = 4 - images.length;
+  return (
+    <section className={styles.referenceUploader}>
+      <div>
+        <strong>补充沙发细节图</strong>
+        <span>可选，最多 4 张。适合上传扶手、靠背、材质、缝线、转角或局部纹理。</span>
+      </div>
+      {images.length > 0 && (
+        <div className={styles.referenceThumbs}>
+          {images.map((image) => <img key={`${image.fileName}-${image.size}`} src={image.dataUrl} alt="沙发细节补充图" />)}
+        </div>
+      )}
+      {remaining > 0 && (
+        <label className={styles.referenceUploadButton}>
+          <ImagePlus size={17} />
+          添加细节图（还可添加 {remaining} 张）
           <input
             type="file"
             accept="image/*"

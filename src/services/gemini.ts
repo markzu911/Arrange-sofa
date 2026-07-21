@@ -18,6 +18,7 @@ export async function analyzeScene(
   roomImage: UploadedImage,
   sofaImage: UploadedImage | null,
   roomReferenceImages: UploadedImage[],
+  sofaReferenceImages: UploadedImage[],
   model: string,
   extraContext: string,
   extraPrompt: string[],
@@ -29,6 +30,7 @@ export async function analyzeScene(
     roomImage,
     roomReferenceImages,
     ...(sofaImage ? { sofaImage } : {}),
+    ...(sofaReferenceImages.length ? { sofaReferenceImages } : {}),
     systemPrompt: buildAnalysisPrompt(extraContext, extraPrompt, userRequirements)
   });
 
@@ -125,6 +127,7 @@ export async function generatePlacementImages(
   roomImage: UploadedImage,
   sofaImage: UploadedImage,
   roomReferenceImages: UploadedImage[],
+  sofaReferenceImages: UploadedImage[],
   analysis: SceneAnalysis,
   settings: PlacementSettings,
   extraContext: string,
@@ -146,6 +149,7 @@ export async function generatePlacementImages(
     roomImage,
     roomReferenceImages,
     sofaImage,
+    sofaReferenceImages,
     analysis,
     settings: masterSettings,
     systemPrompt: "请生成一张用于派生多个镜头的远景主图。",
@@ -178,6 +182,7 @@ export async function generatePlacementImages(
       roomImage,
       roomReferenceImages,
       sofaImage,
+      sofaReferenceImages,
       analysis,
       settings: masterSettings,
       systemPrompt: `${antiLazyPrompt}\n\n请生成一张用于派生多个镜头的远景主图。`,
@@ -208,6 +213,7 @@ export async function generatePlacementImages(
 
 export async function generateVirtualRoomImages(
   sofaImage: UploadedImage,
+  sofaReferenceImages: UploadedImage[],
   analysis: SceneAnalysis,
   settings: PlacementSettings,
   extraContext: string,
@@ -224,6 +230,7 @@ export async function generateVirtualRoomImages(
     mode: "generate",
     model: settings.model,
     sofaImage,
+    sofaReferenceImages,
     analysis,
     settings: masterSettings,
     systemPrompt: "请根据目标沙发参考图生成同一虚拟客厅的多视角试摆效果，不要请求房间原图。",
@@ -267,6 +274,7 @@ export async function checkGeneratedPlacement(
   roomImage: UploadedImage,
   sofaImage: UploadedImage,
   roomReferenceImages: UploadedImage[],
+  sofaReferenceImages: UploadedImage[],
   resultImageUrl: string,
   analysis: SceneAnalysis,
   settings: PlacementSettings,
@@ -280,6 +288,7 @@ export async function checkGeneratedPlacement(
     roomImage,
     roomReferenceImages,
     sofaImage,
+    sofaReferenceImages,
     resultImage,
     analysis,
     settings,
