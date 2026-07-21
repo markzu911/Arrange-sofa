@@ -1012,7 +1012,7 @@ function RoomReferenceUploader({
     <section className={styles.referenceUploader}>
       <div>
         <strong>补充房间角度</strong>
-        <span>可选，最多 5 张。建议上传左右侧、斜角或窗边视角。</span>
+        <span>可选，最多 5 张。生成时会优先参考前 1-3 张，建议先放最关键角度。</span>
       </div>
       {images.length > 0 && (
         <div className={styles.referenceThumbs}>
@@ -1047,7 +1047,7 @@ function SofaReferenceUploader({
     <section className={styles.referenceUploader}>
       <div>
         <strong>补充沙发细节图</strong>
-        <span>可选，最多 4 张。适合上传扶手、靠背、材质、缝线、转角或局部纹理。</span>
+        <span>可选，最多 4 张。生成时优先参考前 2 张，建议上传最关键的扶手、材质或缝线细节。</span>
       </div>
       {images.length > 0 && (
         <div className={styles.referenceThumbs}>

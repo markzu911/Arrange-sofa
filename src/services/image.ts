@@ -4,8 +4,8 @@ const MAX_INPUT_SIZE = 20 * 1024 * 1024;
 const MAX_EDGE = 1200;
 const JPEG_QUALITY = 0.72;
 
-export const GEMINI_IMAGE_TARGET_BYTES = 420 * 1024;
-export const GEMINI_REFERENCE_TARGET_BYTES = 160 * 1024;
+export const GEMINI_IMAGE_TARGET_BYTES = 240 * 1024;
+export const GEMINI_REFERENCE_TARGET_BYTES = 60 * 1024;
 
 export async function compressImage(
   file: File,
