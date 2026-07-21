@@ -18,21 +18,17 @@ export async function analyzeScene(
   roomImage: UploadedImage,
   sofaImage: UploadedImage | null,
   roomReferenceImages: UploadedImage[],
-  sofaReferenceImages: UploadedImage[],
   model: string,
   extraContext: string,
   extraPrompt: string[],
   userRequirements = ""
 ): Promise<SceneAnalysis> {
-  const scopedRoomReferences = roomReferenceImages.slice(0, sofaImage ? 0 : 2);
-  const scopedSofaReferences = sofaReferenceImages.slice(0, 0);
   const response = await postGemini<GeminiAnalyzeResponse>({
     mode: "analyze",
     model,
     roomImage,
-    roomReferenceImages: scopedRoomReferences,
+    roomReferenceImages,
     ...(sofaImage ? { sofaImage } : {}),
-    ...(scopedSofaReferences.length ? { sofaReferenceImages: scopedSofaReferences } : {}),
     systemPrompt: buildAnalysisPrompt(extraContext, extraPrompt, userRequirements)
   });
 
@@ -129,14 +125,11 @@ export async function generatePlacementImages(
   roomImage: UploadedImage,
   sofaImage: UploadedImage,
   roomReferenceImages: UploadedImage[],
-  sofaReferenceImages: UploadedImage[],
   analysis: SceneAnalysis,
   settings: PlacementSettings,
   extraContext: string,
   extraPrompt: string[]
 ): Promise<GeminiImageResponse["images"]> {
-  const scopedRoomReferences = roomReferenceImages.slice(0, 0);
-  const scopedSofaReferences = sofaReferenceImages.slice(0, 1);
   const requestedPerspectives = (["wide", "medium", "close"] as const).filter((perspective) => settings.perspectives.includes(perspective));
   const masterSettings: PlacementSettings = { ...settings, perspectives: requestedPerspectives };
   const perspectivePrompts = Object.fromEntries([
@@ -151,9 +144,8 @@ export async function generatePlacementImages(
     mode: "generate",
     model: settings.model,
     roomImage,
-    roomReferenceImages: scopedRoomReferences,
+    roomReferenceImages,
     sofaImage,
-    sofaReferenceImages: scopedSofaReferences,
     analysis,
     settings: masterSettings,
     systemPrompt: "请生成一张用于派生多个镜头的远景主图。",
@@ -184,9 +176,8 @@ export async function generatePlacementImages(
       mode: "generate",
       model: settings.model,
       roomImage,
-      roomReferenceImages: scopedRoomReferences,
+      roomReferenceImages,
       sofaImage,
-      sofaReferenceImages: scopedSofaReferences,
       analysis,
       settings: masterSettings,
       systemPrompt: `${antiLazyPrompt}\n\n请生成一张用于派生多个镜头的远景主图。`,
@@ -217,13 +208,11 @@ export async function generatePlacementImages(
 
 export async function generateVirtualRoomImages(
   sofaImage: UploadedImage,
-  sofaReferenceImages: UploadedImage[],
   analysis: SceneAnalysis,
   settings: PlacementSettings,
   extraContext: string,
   extraPrompt: string[]
 ): Promise<GeminiImageResponse["images"]> {
-  const scopedSofaReferences = sofaReferenceImages.slice(0, 3);
   const requestedPerspectives = (["wide", "medium", "close"] as const).filter((perspective) => settings.perspectives.includes(perspective));
   const masterSettings: PlacementSettings = { ...settings, perspectives: requestedPerspectives };
   const perspectivePrompts = Object.fromEntries(requestedPerspectives.map((perspective) => [
@@ -235,7 +224,6 @@ export async function generateVirtualRoomImages(
     mode: "generate",
     model: settings.model,
     sofaImage,
-    sofaReferenceImages: scopedSofaReferences,
     analysis,
     settings: masterSettings,
     systemPrompt: "请根据目标沙发参考图生成同一虚拟客厅的多视角试摆效果，不要请求房间原图。",
@@ -258,7 +246,7 @@ export async function extractSofaForeground(sofaImage: UploadedImage, settings: 
   const imageUrl = response.images.find((image) => image.perspective === "wide")?.imageUrl;
   if (!imageUrl) throw new Error("Gemini 未返回沙发前景图");
   const dataUrl = await removeGreenScreen(imageUrl);
-  return compressDataUrlToImage(dataUrl, `${sofaImage.fileName.replace(/\.[^.]+$/, "")}-foreground.jpg`, 820, 0.62, 260 * 1024);
+  return compressDataUrlToImage(dataUrl, `${sofaImage.fileName.replace(/\.[^.]+$/, "")}-foreground.jpg`, 820, 0.64, 300 * 1024);
 }
 
 export async function eraseExistingSofas(roomImage: UploadedImage, settings: PlacementSettings): Promise<UploadedImage> {
@@ -272,30 +260,26 @@ export async function eraseExistingSofas(roomImage: UploadedImage, settings: Pla
   });
   const imageUrl = response.images.find((image) => image.perspective === "wide")?.imageUrl;
   if (!imageUrl) throw new Error("Gemini 未返回干净房间场景图");
-  return compressDataUrlToImage(imageUrl, `${roomImage.fileName.replace(/\.[^.]+$/, "")}-clear.jpg`, 900, 0.62, 320 * 1024);
+  return compressDataUrlToImage(imageUrl, `${roomImage.fileName.replace(/\.[^.]+$/, "")}-clear.jpg`, 960, 0.66, 420 * 1024);
 }
 
 export async function checkGeneratedPlacement(
   roomImage: UploadedImage,
   sofaImage: UploadedImage,
   roomReferenceImages: UploadedImage[],
-  sofaReferenceImages: UploadedImage[],
   resultImageUrl: string,
   analysis: SceneAnalysis,
   settings: PlacementSettings,
   extraContext: string,
   extraPrompt: string[]
 ): Promise<GenerationQualityCheck> {
-  const scopedRoomReferences = roomReferenceImages.slice(0, 1);
-  const scopedSofaReferences = sofaReferenceImages.slice(0, 1);
-  const resultImage = await compressDataUrlToImage(resultImageUrl, "quality-check.jpg", 720, 0.58, 180 * 1024);
+  const resultImage = await compressDataUrlToImage(resultImageUrl, "quality-check.jpg", 820, 0.64, 300 * 1024);
   const response = await postGemini<GeminiQualityResponse>({
     mode: "quality",
     model: settings.model,
     roomImage,
-    roomReferenceImages: scopedRoomReferences,
+    roomReferenceImages,
     sofaImage,
-    sofaReferenceImages: scopedSofaReferences,
     resultImage,
     analysis,
     settings,
@@ -315,8 +299,8 @@ function dataUrlToImage(dataUrl: string): Pick<UploadedImage, "base64" | "mimeTy
 async function postGemini<T>(payload: GeminiGenerateRequest): Promise<T> {
   const body = JSON.stringify(payload);
   const bodySize = new Blob([body]).size;
-  if (bodySize > 1.35 * 1024 * 1024) {
-    throw new Error("请求图片体积仍然过大，已在发送前拦截。请减少补充图片数量，或重新上传体积更小的房间/沙发图后再试。");
+  if (bodySize > 3.5 * 1024 * 1024) {
+    throw new Error("请求图片体积仍然过大，可能被服务端拒绝。请减少补充角度图片，或上传分辨率更低的房间/沙发图后重试。");
   }
   const response = await fetch("/api/gemini", {
     method: "POST",

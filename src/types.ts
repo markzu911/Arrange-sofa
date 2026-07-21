@@ -135,7 +135,6 @@ export interface GeminiGenerateRequest {
   roomImage?: Pick<UploadedImage, "base64" | "mimeType">;
   roomReferenceImages?: Array<Pick<UploadedImage, "base64" | "mimeType">>;
   sofaImage?: Pick<UploadedImage, "base64" | "mimeType">;
-  sofaReferenceImages?: Array<Pick<UploadedImage, "base64" | "mimeType">>;
   analysis?: SceneAnalysis;
   settings?: PlacementSettings;
   systemPrompt: string;
