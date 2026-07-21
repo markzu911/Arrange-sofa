@@ -647,60 +647,6 @@
   border-radius: 10px;
 }
 
-.referenceUploader {
-  display: grid;
-  gap: 12px;
-  align-content: start;
-  padding: 16px;
-  background: #f8fafc;
-  border: 1px solid #dce4f0;
-  border-radius: 10px;
-}
-
-.referenceUploader strong,
-.referenceUploader span {
-  display: block;
-}
-
-.referenceUploader span {
-  margin-top: 5px;
-  color: #64748b;
-  font-size: 13px;
-}
-
-.referenceThumbs {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.referenceThumbs img {
-  width: 100%;
-  aspect-ratio: 1;
-  object-fit: cover;
-  border: 1px solid #dce4f0;
-  border-radius: 6px;
-}
-
-.referenceUploadButton {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  min-height: 38px;
-  padding: 8px 10px;
-  color: #4338ca;
-  background: #fff;
-  border: 1px dashed #818cf8;
-  border-radius: 7px;
-  cursor: pointer;
-  font-size: 13px;
-}
-
-.referenceUploadButton input {
-  display: none;
-}
-
 .previewCard h3 {
   margin: 0 0 10px;
   font-size: 16px;
