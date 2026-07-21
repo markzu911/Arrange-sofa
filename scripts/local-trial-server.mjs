@@ -46,8 +46,6 @@ const server = createServer(async (req, res) => {
       ? error.statusCode
       : error instanceof ImageGenerationUnavailable
         ? 503
-        : isRetryableFetchError(error)
-          ? 503
         : 500;
     console.error("[local-trial-server] request failed", {
       url: req.url,
@@ -57,9 +55,7 @@ const server = createServer(async (req, res) => {
     });
     sendJson(res, statusCode, {
       success: false,
-      message: isRetryableFetchError(error)
-        ? "Gemini 图片生成网络连接失败，请稍后重试；如果连续失败，请减少补充图片数量或降低图片清晰度后再生成。"
-        : error instanceof Error ? error.message : "本地服务处理失败"
+      message: error instanceof Error ? error.message : "本地服务处理失败"
     });
   }
 });

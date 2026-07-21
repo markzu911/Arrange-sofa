@@ -533,12 +533,6 @@
   min-width: 0;
 }
 
-.uploadStack {
-  display: grid;
-  gap: 12px;
-  min-width: 0;
-}
-
 .virtualRoomPanel {
   display: grid;
   align-content: start;
@@ -1034,11 +1028,6 @@
 
 .primaryButton {
   width: 100%;
-}
-
-.stepConfirmButton {
-  align-self: start;
-  min-height: 42px;
 }
 
 .primaryButton:disabled,
