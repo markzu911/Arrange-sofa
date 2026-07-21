@@ -16,9 +16,9 @@ import {
   X
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { defaultSettings, perspectiveLabels, TOOL_COST, TOOL_NAME } from "./constants";
+import { defaultSettings, perspectiveLabels, TOOL_COST, TOOL_NAME, virtualRoomStyleLabels } from "./constants";
 import styles from "./VillaSofaPlacementTool.module.css";
-import { analyzeScene, checkGeneratedPlacement, eraseExistingSofas, extractSofaForeground, generatePlacementImages } from "./services/gemini";
+import { analyzeScene, checkGeneratedPlacement, eraseExistingSofas, extractSofaForeground, generatePlacementImages, generateVirtualRoomImages } from "./services/gemini";
 import { compressDataUrlToBlob, compressImage, GEMINI_IMAGE_TARGET_BYTES, GEMINI_REFERENCE_TARGET_BYTES } from "./services/image";
 import {
   consumeIntegral,
@@ -37,7 +37,8 @@ import type {
   SaasInitPayload,
   ToolMode,
   TrialPlacementPlan,
-  UploadedImage
+  UploadedImage,
+  VirtualRoomStyle
 } from "./types";
 
 type GuidedStep = "room" | "sofa" | "review" | "generating" | "result";
@@ -83,6 +84,39 @@ function createManualAnalysis(): SceneAnalysis {
   };
 }
 
+function createVirtualRoomAnalysis(styleLabel: string): SceneAnalysis {
+  return {
+    roomSummary: `跳过上传房间，将由 AI 生成 ${styleLabel} 虚拟别墅客厅。`,
+    sofaSummary: "以用户上传的沙发图片作为唯一产品参考，生成沙发与虚拟客厅融合的结果图。",
+    sofaIdentity: {
+      seatCount: "以沙发参考图为准",
+      silhouette: "以沙发参考图的整体轮廓和比例为准",
+      armrest: "以沙发参考图为准",
+      backrest: "以沙发参考图为准",
+      cushions: "以沙发参考图为准",
+      material: "以沙发参考图可见材质为准",
+      color: "以沙发参考图主色为准",
+      details: ["保留参考图中的模块数量", "保留扶手、靠背、坐垫、缝线和脚部细节"]
+    },
+    lighting: "由 AI 根据虚拟房间风格生成自然主光源、接地阴影和环境反射。",
+    perspective: "沿用原有远景、中近景、近景视角设置，围绕同一个虚拟客厅和同一张沙发生成。",
+    placementAdvice: `在 ${styleLabel} 虚拟客厅的核心会客区摆放目标沙发，保证沙发是画面主体且与空间风格协调。`,
+    constraints: ["不得改变目标沙发款式、颜色、材质和结构", "不得生成白底产品图或脱离房间的棚拍图", "不得添加第二张相似主沙发"],
+    placementPlan: {
+      summary: `采用 ${styleLabel} 虚拟客厅方案，以目标沙发作为会客区核心生成试摆效果。`,
+      placement: "将目标沙发放置在虚拟客厅主要会客区，与茶几、地毯和背景墙形成完整空间关系",
+      facing: "面向客厅主要视觉焦点，由 AI 根据虚拟房间布局自动确定",
+      scale: "按别墅客厅尺度自然匹配，保证沙发接地、比例真实、空间留白舒适",
+      preserve: [`整体装修风格保持 ${styleLabel}`, "保留目标沙发的产品特征"],
+      remove: ["无需移除用户房间物品"],
+      avoid: ["不要生成展厅白底", "不要让软装遮挡沙发主体", "不要把沙发替换成相似款"],
+      rationale: ["用户选择跳过上传房间，直接生成虚拟房间效果图", "该方案不消耗积分"],
+      candidates: [],
+      selectedCandidateId: ""
+    }
+  };
+}
+
 const initialChatMessages: ChatMessage[] = [
   { role: "assistant", text: "您好，我是您的 AI 别墅沙发试摆助手。" },
   { role: "assistant", text: "我可以把您提供的沙发自然试摆到别墅房间里，保留沙发款式，并匹配空间透视、光线和阴影。要开始试摆吗？" }
@@ -109,6 +143,7 @@ export function VillaSofaPlacementTool() {
   const [guidedStep, setGuidedStep] = useState<GuidedStep>("room");
   const [roomImage, setRoomImage] = useState<UploadedImage | null>(null);
   const [roomReferenceImages, setRoomReferenceImages] = useState<UploadedImage[]>([]);
+  const [useVirtualRoom, setUseVirtualRoom] = useState(false);
   const [sofaImage, setSofaImage] = useState<UploadedImage | null>(null);
   const [sofaForegroundImage, setSofaForegroundImage] = useState<UploadedImage | null>(null);
   const [clearedRoomImage, setClearedRoomImage] = useState<UploadedImage | null>(null);
@@ -172,16 +207,16 @@ export function VillaSofaPlacementTool() {
     if (guidedStep === "room") {
       return {
         eyebrow: "第 1 步",
-        title: "先上传客户房间照片",
-        desc: "上传后我会自动解析空间、光线和透视，不需要您再找按钮。",
-        hint: "建议照片能看到地面、墙面、窗户或主光源。"
+        title: "先选择房间来源",
+        desc: "可以上传客户房间照片，也可以跳过房间，直接生成指定风格的虚拟客厅。",
+        hint: "上传真实房间会进入原试摆流程；虚拟房间只需要沙发图和装修风格。"
       };
     }
     if (guidedStep === "sofa") {
       return {
         eyebrow: "第 2 步",
         title: "现在上传沙发照片",
-        desc: "沙发上传后会自动分析款式、材质和适合的摆放方式。",
+        desc: useVirtualRoom ? "沙发上传后会直接准备虚拟房间方案。" : "沙发上传后会自动分析款式、材质和适合的摆放方式。",
         hint: "建议沙发主体完整，正面或 45 度角，背景尽量简单。"
       };
     }
@@ -207,7 +242,7 @@ export function VillaSofaPlacementTool() {
       desc: "拖动滑块对比原图和效果图，也可以下载结果或重新生成。",
       hint: "如需换角度，返回方案设置后重新选择视角。"
     };
-  }, [guidedStep]);
+  }, [guidedStep, useVirtualRoom]);
 
   function addChatMessage(message: ChatMessage) {
     setChatMessages((current) => [...current, message]);
@@ -252,6 +287,24 @@ export function VillaSofaPlacementTool() {
     }
   }
 
+  function startVirtualRoomFlow() {
+    const styleLabel = virtualRoomStyleLabels[settings.virtualRoomStyle];
+    setError("");
+    setUseVirtualRoom(true);
+    setAgentFlowStarted(true);
+    setRoomImage(null);
+    setRoomReferenceImages([]);
+    setSofaImage(null);
+    setSofaForegroundImage(null);
+    setClearedRoomImage(null);
+    setAnalysis(null);
+    setResults([]);
+    setReviewSubstep("plan");
+    setGuidedStep("sofa");
+    setStatus(`已选择 ${styleLabel} 虚拟房间，请上传沙发照片`);
+    addChatMessage({ role: "assistant", text: `已切换为 ${styleLabel} 虚拟房间模式。请上传沙发照片，后续会直接生成虚拟客厅效果图。` });
+  }
+
   async function handleUpload(kind: "room" | "sofa" | "room-reference", file?: File) {
     if (!file) return;
     setError("");
@@ -265,6 +318,7 @@ export function VillaSofaPlacementTool() {
       );
       setResults([]);
       if (kind === "room") {
+        setUseVirtualRoom(false);
         setAgentFlowStarted(true);
         setRoomImage(image);
         setRoomReferenceImages([]);
@@ -321,6 +375,28 @@ export function VillaSofaPlacementTool() {
   }
 
   async function autoAnalyzeSofa(nextSofaImage: UploadedImage) {
+    if (useVirtualRoom) {
+      const styleLabel = virtualRoomStyleLabels[settings.virtualRoomStyle];
+      setIsAnalyzingSofa(true);
+      setStatus("正在准备虚拟房间试摆方案...");
+      try {
+        const nextAnalysis = createVirtualRoomAnalysis(styleLabel);
+        setAnalysis(nextAnalysis);
+        setSofaForegroundImage(nextSofaImage);
+        setClearedRoomImage(null);
+        setReviewSubstep("plan");
+        setGuidedStep("review");
+        setStatus("虚拟房间方案已准备好，请确认风格、视角和比例");
+        addChatMessage({ role: "assistant", text: `已准备 ${styleLabel} 虚拟房间方案。该模式不消耗积分，确认视角和比例后即可生成。` });
+      } catch (err) {
+        setError(userFacingError(err, "虚拟房间方案准备失败"));
+        setStatus("");
+      } finally {
+        setIsAnalyzingSofa(false);
+      }
+      return;
+    }
+
     if (!roomImage) {
       setError("请先上传房间照片");
       return;
@@ -356,7 +432,7 @@ export function VillaSofaPlacementTool() {
   }
 
   async function handleGenerate(correctionPrompt = "") {
-    if (!roomImage || !sofaImage || !sofaForegroundImage || !clearedRoomImage || !analysis) {
+    if (!sofaImage || !analysis || (!useVirtualRoom && (!roomImage || !sofaForegroundImage || !clearedRoomImage))) {
       setError("请先完成房间和沙发上传");
       return;
     }
@@ -365,15 +441,17 @@ export function VillaSofaPlacementTool() {
     setIsGenerating(true);
     setGuidedStep("generating");
     setStatus("正在生成试摆效果图...");
-    addChatMessage({ role: "assistant", text: "方案已确认，正在生成试摆效果图。我会匹配沙发尺度、房间透视、光照和地面阴影。" });
+    addChatMessage({ role: "assistant", text: useVirtualRoom ? "方案已确认，正在生成虚拟房间效果图。我会保留沙发产品特征，并匹配装修风格、光照和空间尺度。" : "方案已确认，正在生成试摆效果图。我会匹配沙发尺度、房间透视、光照和地面阴影。" });
     try {
-      if (!isStandaloneTrial) {
+      if (!useVirtualRoom && !isStandaloneTrial) {
         await verifyIntegral(platform);
       }
       const generationSettings = correctionPrompt
         ? { ...settings, notes: `${settings.notes}\n质检纠正要求：${correctionPrompt}`.trim() }
         : settings;
-      const images = await generatePlacementImages(clearedRoomImage, sofaForegroundImage, roomReferenceImages, analysis, generationSettings, platform.context, platform.prompt);
+      const images = useVirtualRoom
+        ? await generateVirtualRoomImages(sofaImage, analysis, generationSettings, platform.context, platform.prompt)
+        : await generatePlacementImages(clearedRoomImage as UploadedImage, sofaForegroundImage as UploadedImage, roomReferenceImages, analysis, generationSettings, platform.context, platform.prompt);
       if (images.length !== generationSettings.perspectives.length) {
         throw new Error(`视角结果不完整：已选择 ${generationSettings.perspectives.length} 个视角，但仅生成 ${images.length} 张图片。请重新生成。`);
       }
@@ -382,13 +460,13 @@ export function VillaSofaPlacementTool() {
         perspective: item.perspective,
         title: item.title,
         imageUrl: item.imageUrl,
-        uploadStatus: isStandaloneTrial ? "skipped" : "pending"
+        uploadStatus: useVirtualRoom || isStandaloneTrial ? "skipped" : "pending"
       }));
 
-      if (!isStandaloneTrial) {
+      if (!useVirtualRoom && !isStandaloneTrial) {
         const currentIntegral = await consumeIntegral(platform);
         if (typeof currentIntegral === "number") setIntegral(currentIntegral);
-      } else {
+      } else if (!useVirtualRoom) {
         setIntegral((value) => Math.max(0, value - toolCost));
       }
 
@@ -398,11 +476,11 @@ export function VillaSofaPlacementTool() {
       setStatus(`已生成 ${generated.length} 个视角结果`);
       addChatMessage({ role: "assistant", text: `试摆效果已经生成，共 ${generated.length} 个视角。您可以在下方切换视角、拖动对比滑块或下载图片。` });
 
-      if (!isStandaloneTrial) {
+      if (!useVirtualRoom && !isStandaloneTrial) {
         await uploadGeneratedResults(generated);
       }
 
-      if (generated.length) {
+      if (!useVirtualRoom && generated.length && roomImage) {
         setStatus("试摆效果已生成，正在自动检查是否符合确认方案...");
         try {
           const qualities = await Promise.all(generated.map((item) => checkGeneratedPlacement(
@@ -473,6 +551,14 @@ export function VillaSofaPlacementTool() {
     setAnalysis({ ...analysis, placementPlan: { ...analysis.placementPlan, [field]: value } });
   }
 
+  function updateSettings(nextSettings: PlacementSettings) {
+    const styleChanged = nextSettings.virtualRoomStyle !== settings.virtualRoomStyle;
+    setSettings(nextSettings);
+    if (useVirtualRoom && styleChanged) {
+      setAnalysis(createVirtualRoomAnalysis(virtualRoomStyleLabels[nextSettings.virtualRoomStyle]));
+    }
+  }
+
   async function refreshPlacementPlan() {
     if (!sofaImage) return;
     await autoAnalyzeSofa(sofaImage);
@@ -489,6 +575,7 @@ export function VillaSofaPlacementTool() {
   function resetFlow() {
     setGuidedStep("room");
     setReviewSubstep("plan");
+    setUseVirtualRoom(false);
     setRoomImage(null);
     setRoomReferenceImages([]);
     setSofaImage(null);
@@ -505,23 +592,36 @@ export function VillaSofaPlacementTool() {
   const currentStepContent = (
     <>
       {guidedStep === "room" && (
-        <UploadStep
-          kind="room"
-          image={roomImage}
-          busy={isAnalyzingRoom}
-          title="上传房间照片"
-          description="上传后自动解析空间，不需要手动点击下一步。"
-          onFile={(file) => handleUpload("room", file)}
-        />
+        <div className={styles.roomEntryLayout}>
+          <UploadStep
+            kind="room"
+            image={roomImage}
+            busy={isAnalyzingRoom}
+            title="上传房间照片"
+            description="上传后自动解析空间，不需要手动点击下一步。"
+            onFile={(file) => handleUpload("room", file)}
+          />
+          <VirtualRoomStarter
+            selectedStyle={settings.virtualRoomStyle}
+            onStyleChange={(virtualRoomStyle) => setSettings((current) => ({ ...current, virtualRoomStyle }))}
+            onStart={startVirtualRoomFlow}
+          />
+        </div>
       )}
 
       {guidedStep === "sofa" && (
         <div className={styles.focusLayout}>
-          <PreviewCard title="房间已解析" image={roomImage} loading={isAnalyzingRoom} />
-          <RoomReferenceUploader
-            images={roomReferenceImages}
-            onFiles={(files) => files.forEach((file) => handleUpload("room-reference", file))}
-          />
+          {useVirtualRoom ? (
+            <VirtualRoomSummary selectedStyle={settings.virtualRoomStyle} />
+          ) : (
+            <>
+              <PreviewCard title="房间已解析" image={roomImage} loading={isAnalyzingRoom} />
+              <RoomReferenceUploader
+                images={roomReferenceImages}
+                onFiles={(files) => files.forEach((file) => handleUpload("room-reference", file))}
+              />
+            </>
+          )}
           <UploadStep
             kind="sofa"
             image={sofaImage}
@@ -538,13 +638,14 @@ export function VillaSofaPlacementTool() {
           analysis={analysis}
           sofaForegroundImage={sofaForegroundImage}
           settings={settings}
+          useVirtualRoom={useVirtualRoom}
           substep={reviewSubstep}
           showAnalysisEditor={showAnalysisEditor}
-          onToggleAnalysis={() => setShowAnalysisEditor((value) => !value)}
-          onAnalysisChange={updateAnalysisField}
-          onPlanChange={updatePlacementPlanField}
-          onRefreshPlan={refreshPlacementPlan}
-          onSettingsChange={setSettings}
+            onToggleAnalysis={() => setShowAnalysisEditor((value) => !value)}
+            onAnalysisChange={updateAnalysisField}
+            onPlanChange={updatePlacementPlanField}
+            onRefreshPlan={refreshPlacementPlan}
+            onSettingsChange={updateSettings}
           onPerspectiveToggle={togglePerspective}
           onConfirmPlan={() => setReviewSubstep("settings")}
           onBackToPlan={() => setReviewSubstep("plan")}
@@ -562,9 +663,10 @@ export function VillaSofaPlacementTool() {
         </section>
       )}
 
-      {guidedStep === "result" && roomImage && currentResult && (
+      {guidedStep === "result" && currentResult && (
         <ResultStep
           roomImage={roomImage}
+          useVirtualRoom={useVirtualRoom}
           result={currentResult}
           results={results}
           selectedResult={selectedResult}
@@ -750,6 +852,58 @@ function ChatWorkspace({
   );
 }
 
+function VirtualRoomStarter({
+  selectedStyle,
+  onStyleChange,
+  onStart
+}: {
+  selectedStyle: VirtualRoomStyle;
+  onStyleChange: (style: VirtualRoomStyle) => void;
+  onStart: () => void;
+}) {
+  return (
+    <section className={styles.virtualRoomPanel}>
+      <div className={styles.virtualRoomHeader}>
+        <Wand2 size={20} />
+        <div>
+          <strong>跳过房间，生成虚拟房间</strong>
+          <span>选择装修风格后，只上传沙发即可生成虚拟客厅效果。</span>
+        </div>
+      </div>
+      <div className={styles.choiceGrid}>
+        {Object.entries(virtualRoomStyleLabels).map(([value, label]) => (
+          <button
+            key={value}
+            className={selectedStyle === value ? styles.selectedChoice : ""}
+            onClick={() => onStyleChange(value as VirtualRoomStyle)}
+            aria-pressed={selectedStyle === value}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <button className={styles.primaryButton} onClick={onStart}>
+        <Sparkles size={18} />
+        使用虚拟房间
+      </button>
+    </section>
+  );
+}
+
+function VirtualRoomSummary({ selectedStyle }: { selectedStyle: VirtualRoomStyle }) {
+  return (
+    <section className={styles.virtualRoomPanel}>
+      <div className={styles.virtualRoomHeader}>
+        <Wand2 size={20} />
+        <div>
+          <strong>{virtualRoomStyleLabels[selectedStyle]}虚拟房间</strong>
+          <span>已跳过真实房间上传。接下来上传沙发，AI 会围绕同一虚拟客厅生成远景、中近景和近景。</span>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function UploadStep({
   title,
   description,
@@ -838,6 +992,7 @@ function ReviewStep({
   analysis,
   sofaForegroundImage,
   settings,
+  useVirtualRoom,
   substep,
   showAnalysisEditor,
   onToggleAnalysis,
@@ -855,6 +1010,7 @@ function ReviewStep({
   analysis: SceneAnalysis;
   sofaForegroundImage: UploadedImage | null;
   settings: PlacementSettings;
+  useVirtualRoom: boolean;
   substep: "plan" | "settings";
   showAnalysisEditor: boolean;
   onToggleAnalysis: () => void;
@@ -942,6 +1098,27 @@ function ReviewStep({
             </div>
 
             <div className={styles.settingsGrid}>
+              {useVirtualRoom && (
+                <div className={styles.optionBlock}>
+                  <div className={styles.optionHeading}>
+                    <strong>虚拟房间风格</strong>
+                    <span>影响空间装修和软装搭配</span>
+                  </div>
+                  <div className={styles.choiceGrid}>
+                    {Object.entries(virtualRoomStyleLabels).map(([value, label]) => (
+                      <button
+                        key={value}
+                        className={settings.virtualRoomStyle === value ? styles.selectedChoice : ""}
+                        onClick={() => onSettingsChange({ ...settings, virtualRoomStyle: value as VirtualRoomStyle })}
+                        aria-pressed={settings.virtualRoomStyle === value}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className={styles.optionBlock}>
                 <div className={styles.optionHeading}>
                   <strong>图片比例</strong>
@@ -1055,6 +1232,7 @@ function ReviewStep({
 
 function ResultStep({
   roomImage,
+  useVirtualRoom,
   result,
   results,
   selectedResult,
@@ -1067,7 +1245,8 @@ function ResultStep({
   onCorrect,
   isGenerating
 }: {
-  roomImage: UploadedImage;
+  roomImage: UploadedImage | null;
+  useVirtualRoom: boolean;
   result: GeneratedImageResult;
   results: GeneratedImageResult[];
   selectedResult: number;
@@ -1128,11 +1307,11 @@ function ResultStep({
           <div className={styles.viewerToolbar}>
             <div>
               <button className={viewerImage === "result" ? styles.selectedChoice : ""} onClick={() => setViewerImage("result")}>效果图</button>
-              <button className={viewerImage === "original" ? styles.selectedChoice : ""} onClick={() => setViewerImage("original")}>原图</button>
+              {!useVirtualRoom && roomImage && <button className={viewerImage === "original" ? styles.selectedChoice : ""} onClick={() => setViewerImage("original")}>原图</button>}
             </div>
             <button className={styles.viewerClose} onClick={() => setIsViewerOpen(false)} aria-label="关闭查看"><X size={22} /></button>
           </div>
-          <img src={viewerImage === "result" ? result.imageUrl : roomImage.dataUrl} alt={viewerImage === "result" ? "生成效果图" : "原始房间图"} />
+          <img src={viewerImage === "result" || !roomImage ? result.imageUrl : roomImage.dataUrl} alt={viewerImage === "result" || !roomImage ? "生成效果图" : "原始房间图"} />
         </div>
       )}
     </section>

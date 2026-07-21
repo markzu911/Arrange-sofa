@@ -414,9 +414,18 @@
 }
 
 .chatTask .focusLayout,
+.chatTask .roomEntryLayout,
 .chatTask .reviewLayout {
   padding: 0;
   background: transparent;
+}
+
+.chatTask .roomEntryLayout {
+  grid-template-columns: 1fr;
+}
+
+.chatTask .virtualRoomPanel {
+  box-shadow: none;
 }
 
 .chatTask .generatingCard {
@@ -502,6 +511,51 @@
 
 .uploadHero {
   padding: 24px;
+}
+
+.roomEntryLayout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+  gap: 18px;
+}
+
+.roomEntryLayout .uploadHero {
+  min-width: 0;
+}
+
+.virtualRoomPanel {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  padding: 18px;
+  background: #fff;
+  border: 1px solid #dce4f0;
+  border-radius: 14px;
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.08);
+}
+
+.virtualRoomHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: #4338ca;
+}
+
+.virtualRoomHeader strong,
+.virtualRoomHeader span {
+  display: block;
+}
+
+.virtualRoomHeader strong {
+  color: #111827;
+  font-size: 18px;
+}
+
+.virtualRoomHeader span {
+  margin-top: 5px;
+  color: #64748b;
+  font-size: 14px;
+  line-height: 1.6;
 }
 
 .bigUploader {
@@ -1222,6 +1276,7 @@
   .toolHeader,
   .flowHeader,
   .focusLayout,
+  .roomEntryLayout,
   .chatModeStage {
     grid-template-columns: 1fr;
   }

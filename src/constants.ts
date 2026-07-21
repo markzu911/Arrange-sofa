@@ -1,4 +1,4 @@
-import type { PlacementSettings, PerspectiveOption } from "./types";
+import type { PlacementSettings, PerspectiveOption, VirtualRoomStyle } from "./types";
 
 export const TOOL_ID = "villa-sofa-placement";
 export const TOOL_NAME = "AI 别墅沙发试摆助手";
@@ -15,6 +15,7 @@ export const defaultSettings: PlacementSettings = {
   addHumanModel: false,
   humanModelGender: "any",
   humanModelAge: "adult",
+  virtualRoomStyle: "modern",
   notes: ""
 };
 
@@ -22,6 +23,17 @@ export const perspectiveLabels: Record<PerspectiveOption, string> = {
   wide: "远景（房间全景）",
   medium: "中近景",
   close: "近景（主要展示沙发）"
+};
+
+export const virtualRoomStyleLabels: Record<VirtualRoomStyle, string> = {
+  modern: "现代简约",
+  italian: "意式轻奢",
+  cream: "奶油风",
+  "new-chinese": "新中式",
+  "wabi-sabi": "侘寂风",
+  american: "美式",
+  nordic: "北欧",
+  minimal: "极简黑白"
 };
 
 export const sofaPlacementSystemPrompt = `你是专业的高端别墅软装视觉设计助手。你的任务是把用户上传的沙发照片真实自然地试摆到用户上传的别墅房间照片中。

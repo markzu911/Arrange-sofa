@@ -8,6 +8,7 @@ export type PerspectiveOption = "wide" | "medium" | "close";
 export type BlendStrength = "low" | "medium" | "high";
 export type HumanModelGender = "any" | "female" | "male";
 export type HumanModelAge = "adult" | "child" | "senior";
+export type VirtualRoomStyle = "modern" | "italian" | "cream" | "new-chinese" | "wabi-sabi" | "american" | "nordic" | "minimal";
 
 export interface SaasInitPayload {
   type: "SAAS_INIT";
@@ -113,6 +114,7 @@ export interface PlacementSettings {
   addHumanModel: boolean;
   humanModelGender: HumanModelGender;
   humanModelAge: HumanModelAge;
+  virtualRoomStyle: VirtualRoomStyle;
   notes: string;
 }
 

@@ -10,7 +10,7 @@ import type {
   UploadedImage
 } from "../types";
 import { perspectiveLabels } from "../constants";
-import { buildAnalysisPrompt, buildCameraVariationPrompt, buildGenerationPrompt, buildQualityPrompt } from "./prompt";
+import { buildAnalysisPrompt, buildCameraVariationPrompt, buildGenerationPrompt, buildQualityPrompt, buildVirtualRoomPrompt } from "./prompt";
 import { assertDistinctCameraViews, compressDataUrlToImage, removeGreenScreen } from "./image";
 import { resolvePlacementPlan } from "./placement";
 
@@ -201,6 +201,36 @@ export async function generatePlacementImages(
       .map((perspective) => ({ perspective, title: perspectiveLabels[perspective], imageUrl: retryImageByPerspective.get(perspective) }))
       .filter((image): image is { perspective: PlacementSettings["perspectives"][number]; title: string; imageUrl: string } => Boolean(image.imageUrl));
   }
+  return requestedPerspectives
+    .map((perspective) => ({ perspective, title: perspectiveLabels[perspective], imageUrl: imageByPerspective.get(perspective) }))
+    .filter((image): image is { perspective: PlacementSettings["perspectives"][number]; title: string; imageUrl: string } => Boolean(image.imageUrl));
+}
+
+export async function generateVirtualRoomImages(
+  sofaImage: UploadedImage,
+  analysis: SceneAnalysis,
+  settings: PlacementSettings,
+  extraContext: string,
+  extraPrompt: string[]
+): Promise<GeminiImageResponse["images"]> {
+  const requestedPerspectives = (["wide", "medium", "close"] as const).filter((perspective) => settings.perspectives.includes(perspective));
+  const masterSettings: PlacementSettings = { ...settings, perspectives: requestedPerspectives };
+  const perspectivePrompts = Object.fromEntries(requestedPerspectives.map((perspective) => [
+    perspective,
+    buildVirtualRoomPrompt(analysis, masterSettings, perspective, extraContext, extraPrompt)
+  ]));
+
+  const response = await postGemini<GeminiImageResponse>({
+    mode: "generate",
+    model: settings.model,
+    sofaImage,
+    analysis,
+    settings: masterSettings,
+    systemPrompt: "请根据目标沙发参考图生成同一虚拟客厅的多视角试摆效果，不要请求房间原图。",
+    perspectivePrompts
+  });
+
+  const imageByPerspective = new Map(response.images.map((image) => [image.perspective, image.imageUrl]));
   return requestedPerspectives
     .map((perspective) => ({ perspective, title: perspectiveLabels[perspective], imageUrl: imageByPerspective.get(perspective) }))
     .filter((image): image is { perspective: PlacementSettings["perspectives"][number]; title: string; imageUrl: string } => Boolean(image.imageUrl));

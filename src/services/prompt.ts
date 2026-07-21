@@ -1,4 +1,4 @@
-import { perspectiveLabels, sofaPlacementSystemPrompt } from "../constants";
+import { perspectiveLabels, sofaPlacementSystemPrompt, virtualRoomStyleLabels } from "../constants";
 import type { PlacementSettings, SceneAnalysis } from "../types";
 
 function buildHumanModelPrompt(settings: PlacementSettings): string {
@@ -120,6 +120,40 @@ export function buildCameraVariationPrompt(
     settings.notes ? `用户要求（最高优先级）：${settings.notes}` : "",
     extraContext ? `平台上下文：${extraContext}` : "",
     extraPrompt.length ? `平台补充关键词：${extraPrompt.join("；")}` : ""
+  ].filter(Boolean).join("\n");
+}
+
+export function buildVirtualRoomPrompt(
+  analysis: SceneAnalysis,
+  settings: PlacementSettings,
+  perspective: string,
+  extraContext = "",
+  extraPrompt: string[] = []
+): string {
+  const styleLabel = virtualRoomStyleLabels[settings.virtualRoomStyle];
+  const cameraInstruction: Record<string, string> = {
+    wide: "远景：相机位于虚拟客厅入口或角落，完整呈现客厅空间、地面、墙面、天花、窗景和软装关系；目标沙发占画面约 18% 到 30%，必须能看清它在空间中的摆放。",
+    medium: "中近景：相机明显靠近会客区并略微偏侧，目标沙发占画面约 45% 到 60%；只保留沙发周边的茶几、地毯、背景墙或窗景作为空间参照。",
+    close: "近景：相机贴近目标沙发正前方或侧前方，目标沙发占画面约 65% 到 80%；重点展示扶手、靠背、坐垫、材质纹理和产品轮廓，仅保留少量虚拟房间上下文。"
+  };
+
+  return [
+    sofaPlacementSystemPrompt,
+    "这是从沙发产品图直接生成虚拟房间试摆效果的任务。没有用户房间原图，输入图片只包含一张目标沙发参考图。",
+    `虚拟房间装修风格：${styleLabel}。请生成高端别墅客厅或大平层客厅，空间完整、真实、有尺度感，软装风格统一，不要生成展厅白底、棚拍、产品海报或纯背景图。`,
+    "目标沙发身份锁定：输入图中的沙发是唯一允许出现的主沙发。必须保留它的款式、颜色、材质、扶手、靠背、坐垫、脚部、缝线/拉扣/褶皱、模块数量和整体轮廓；不得用相似款替代，不得重新设计，不得改变座位数、比例或主色。",
+    "沙发必须自然放在虚拟客厅会客区中，与地面接触、阴影、反射、透视和环境光一致。允许根据虚拟房间风格添加茶几、地毯、灯具、窗帘、墙面、植物等配套元素，但它们不能遮挡沙发主体。",
+    `生成视角：${perspectiveLabels[perspective as keyof typeof perspectiveLabels] ?? perspective}`,
+    `镜头构图硬约束：${cameraInstruction[perspective] ?? cameraInstruction.medium}`,
+    `图片比例：${settings.ratio}`,
+    `清晰度：${settings.clarity}`,
+    buildHumanModelPrompt(settings),
+    settings.notes ? `用户额外要求（最高优先级，必须逐项执行）：${settings.notes}` : "用户没有额外要求时，请自行完成协调的空间搭配。",
+    `已确认虚拟试摆计划：${JSON.stringify(analysis.placementPlan)}`,
+    `目标沙发身份卡：${JSON.stringify(analysis.sofaIdentity)}`,
+    "多视角生成时，同一个沙发、同一个房间、同一个摆放方案必须保持一致。中近景和近景不能只是远景裁切或放大，必须体现真实相机位移、距离变化和构图重点变化。",
+    extraContext ? `平台传入上下文：${extraContext}` : "",
+    extraPrompt.length ? `平台补充关键词：${extraPrompt.join("、")}` : ""
   ].filter(Boolean).join("\n");
 }
 
