@@ -583,15 +583,11 @@ export function VillaSofaPlacementTool() {
   function goToStep(step: GuidedStep) {
     if (!canVisitStep(step)) return;
     setError("");
-    if (step === "room" || step === "sofa") {
-      setResults([]);
-      setSelectedResult(0);
-    }
     if (step === "review") {
       setReviewSubstep("settings");
     }
     setGuidedStep(step);
-    setStatus(step === "sofa" ? "可重新上传沙发照片，上传后会重新生成方案" : "");
+    setStatus(step === "sofa" ? "可查看或重新上传沙发照片，已有结果会保留到重新上传或重新生成为止" : "");
   }
 
   function resetFlow() {
