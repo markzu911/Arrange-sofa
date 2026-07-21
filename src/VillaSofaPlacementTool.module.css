@@ -1,6 +1,6 @@
 .toolShell {
   min-height: 100vh;
-  padding-bottom: 44px;
+  padding-bottom: 18px;
   background: #f5f7fb;
 }
 
@@ -12,7 +12,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 18px;
-  padding: 16px min(6vw, 70px);
+  padding: 12px min(5vw, 54px);
   background: rgba(255, 255, 255, 0.94);
   border-bottom: 1px solid #dce4f0;
   backdrop-filter: blur(12px);
@@ -40,8 +40,8 @@
 .logoMark {
   display: grid;
   place-items: center;
-  width: 42px;
-  height: 42px;
+  width: 38px;
+  height: 38px;
   color: #fff;
   background: #4f46e5;
   border-radius: 10px;
@@ -49,7 +49,7 @@
 
 .brandBlock h1 {
   margin: 0;
-  font-size: 22px;
+  font-size: 20px;
   line-height: 1.2;
 }
 
@@ -140,7 +140,7 @@
   align-items: flex-end;
   justify-content: space-between;
   gap: 20px;
-  padding: 34px 0 18px;
+  padding: 18px 0 10px;
 }
 
 .flowHeader span {
@@ -149,8 +149,8 @@
 }
 
 .flowHeader h2 {
-  margin: 8px 0 0;
-  font-size: clamp(28px, 4vw, 44px);
+  margin: 4px 0 0;
+  font-size: clamp(22px, 3vw, 32px);
   line-height: 1.15;
 }
 
@@ -165,7 +165,7 @@
 .progressRail {
   justify-content: space-between;
   gap: 10px;
-  padding: 10px;
+  padding: 8px;
   background: #fff;
   border: 1px solid #dce4f0;
   border-radius: 12px;
@@ -174,17 +174,27 @@
 .progressItem {
   flex: 1;
   gap: 8px;
-  min-height: 38px;
+  min-height: 34px;
   color: #64748b;
   font-weight: 700;
   border-radius: 8px;
 }
 
+.progressItem:disabled {
+  cursor: default;
+  opacity: 0.52;
+}
+
+.progressItem:not(:disabled):hover {
+  color: #3730a3;
+  background: #f8faff;
+}
+
 .progressItem span {
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   color: #64748b;
   background: #f1f5f9;
   border-radius: 50%;
@@ -208,8 +218,8 @@
 .statusBar {
   justify-content: space-between;
   gap: 12px;
-  margin-top: 14px;
-  padding: 12px 16px;
+  margin-top: 10px;
+  padding: 9px 14px;
   background: #fff;
   border: 1px solid #e2e8f0;
   border-radius: 10px;
@@ -226,7 +236,7 @@
 .guidedStage,
 .chatModeStage,
 .workbenchStage {
-  margin-top: 18px;
+  margin-top: 12px;
 }
 
 .uploadHero,
@@ -510,13 +520,13 @@
 }
 
 .uploadHero {
-  padding: 24px;
+  padding: 16px;
 }
 
 .roomEntryLayout {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
-  gap: 18px;
+  gap: 14px;
 }
 
 .roomEntryLayout .uploadHero {
@@ -526,8 +536,8 @@
 .virtualRoomPanel {
   display: grid;
   align-content: start;
-  gap: 16px;
-  padding: 18px;
+  gap: 12px;
+  padding: 16px;
   background: #fff;
   border: 1px solid #dce4f0;
   border-radius: 14px;
@@ -562,7 +572,7 @@
   position: relative;
   display: grid;
   place-items: center;
-  min-height: min(56vh, 560px);
+  min-height: min(46vh, 420px);
   overflow: hidden;
   color: #4338ca;
   background: #f8fafc;
@@ -578,7 +588,7 @@
 .bigUploader img {
   width: 100%;
   height: 100%;
-  max-height: min(62vh, 620px);
+  max-height: min(50vh, 460px);
   object-fit: contain;
   background: #eef2f7;
 }
@@ -586,14 +596,14 @@
 .bigUploader span {
   display: grid;
   place-items: center;
-  gap: 12px;
-  padding: 32px;
+  gap: 10px;
+  padding: 24px;
   text-align: center;
 }
 
 .bigUploader strong {
   color: #111827;
-  font-size: 28px;
+  font-size: 24px;
 }
 
 .bigUploader small {
@@ -620,12 +630,14 @@
 .focusLayout {
   display: grid;
   grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
-  gap: 18px;
-  padding: 20px;
+  gap: 14px;
+  padding: 16px;
 }
 
 .reviewLayout {
-  padding: 14px;
+  max-height: calc(100vh - 220px);
+  padding: 12px;
+  overflow: auto;
 }
 
 .previewCard {
@@ -731,12 +743,12 @@
 .planOverview {
   display: grid;
   grid-template-columns: minmax(280px, 0.72fr) minmax(0, 1.28fr);
-  gap: 12px;
+  gap: 10px;
   align-items: start;
 }
 
 .aiSummary {
-  padding: 12px;
+  padding: 10px;
   background: #f8fafc;
   border: 1px solid #e2e8f0;
   border-radius: 10px;
@@ -750,7 +762,7 @@
 }
 
 .aiSummary p {
-  margin: 8px 0;
+  margin: 6px 0;
   color: #111827;
   font-size: 15px;
   line-height: 1.55;
@@ -766,8 +778,8 @@
 
 .planCard {
   display: grid;
-  gap: 10px;
-  padding: 12px;
+  gap: 8px;
+  padding: 10px;
   border: 1px solid #c7d2fe;
   border-radius: 10px;
   background: #f8faff;
@@ -836,7 +848,7 @@
 .planGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 7px;
 }
 
 .planField {
@@ -867,7 +879,7 @@
 .settingsGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: 10px;
   align-items: start;
 }
 
@@ -954,8 +966,8 @@
 .modelOptions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  padding: 10px;
+  gap: 8px;
+  padding: 8px;
   background: #f8fafc;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
@@ -976,7 +988,7 @@
 .resultTabs {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 8px;
+  gap: 7px;
 }
 
 .choiceGrid button,
@@ -1005,8 +1017,8 @@
 
 .primaryButton,
 .primaryInlineButton {
-  min-height: 46px;
-  padding: 11px 18px;
+  min-height: 42px;
+  padding: 9px 16px;
   color: #fff;
   font-weight: 900;
   background: #4f46e5;
@@ -1027,14 +1039,14 @@
 .generatingCard {
   display: grid;
   place-items: center;
-  min-height: 480px;
-  padding: 40px;
+  min-height: min(52vh, 360px);
+  padding: 28px;
   text-align: center;
 }
 
 .generatingCard h3 {
-  margin: 18px 0 8px;
-  font-size: 28px;
+  margin: 14px 0 6px;
+  font-size: 24px;
 }
 
 .generatingCard p {
@@ -1045,15 +1057,17 @@
 }
 
 .resultPage {
-  padding: 20px;
+  max-height: calc(100vh - 210px);
+  padding: 14px;
+  overflow: auto;
 }
 
 .resultTabs {
-  margin-bottom: 16px;
+  margin-bottom: 10px;
 }
 
 .resultSummary {
-  margin: 0 0 10px;
+  margin: 0 0 8px;
   color: #64748b;
   font-size: 14px;
 }
@@ -1071,7 +1085,8 @@
 .resultImageButton {
   position: relative;
   display: block;
-  width: min(100%, 1060px);
+  width: min(100%, 840px);
+  max-height: min(52vh, 520px);
   margin: 0 auto;
   padding: 0;
   overflow: hidden;
@@ -1084,7 +1099,8 @@
 .resultImageButton img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  max-height: min(52vh, 520px);
+  object-fit: contain;
 }
 
 .resultImageButton span {
@@ -1174,6 +1190,22 @@
   aspect-ratio: 16 / 9;
 }
 
+.resultImageButton.ratioSquare {
+  width: min(100%, 520px);
+}
+
+.resultImageButton.ratioPortrait {
+  width: min(100%, 430px);
+}
+
+.resultImageButton.ratioClassic {
+  width: min(100%, 700px);
+}
+
+.resultImageButton.ratioWide {
+  width: min(100%, 840px);
+}
+
 .compareBox img,
 .afterLayer img {
   position: absolute;
@@ -1202,7 +1234,7 @@
   flex-wrap: wrap;
   gap: 10px;
   justify-content: center;
-  margin-top: 16px;
+  margin-top: 10px;
 }
 
 .qualityPassed,

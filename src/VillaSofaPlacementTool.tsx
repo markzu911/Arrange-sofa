@@ -572,6 +572,28 @@ export function VillaSofaPlacementTool() {
     });
   }
 
+  function canVisitStep(step: GuidedStep) {
+    if (step === "room") return !isGenerating;
+    if (step === "sofa") return !isGenerating && (useVirtualRoom || Boolean(roomImage));
+    if (step === "review") return !isGenerating && Boolean(analysis);
+    if (step === "result") return !isGenerating && results.length > 0;
+    return false;
+  }
+
+  function goToStep(step: GuidedStep) {
+    if (!canVisitStep(step)) return;
+    setError("");
+    if (step === "room" || step === "sofa") {
+      setResults([]);
+      setSelectedResult(0);
+    }
+    if (step === "review") {
+      setReviewSubstep("settings");
+    }
+    setGuidedStep(step);
+    setStatus(step === "sofa" ? "可重新上传沙发照片，上传后会重新生成方案" : "");
+  }
+
   function resetFlow() {
     setGuidedStep("room");
     setReviewSubstep("plan");
@@ -675,6 +697,7 @@ export function VillaSofaPlacementTool() {
           onSelectResult={setSelectedResult}
           onCompareChange={setCompareValue}
           onBack={() => { setReviewSubstep("settings"); setGuidedStep("review"); }}
+          onBackToSofa={() => goToStep("sofa")}
           onRegenerate={handleGenerate}
           onCorrect={() => handleGenerate(currentResult.quality?.correctionPrompt || "")}
           isGenerating={isGenerating}
@@ -744,11 +767,18 @@ export function VillaSofaPlacementTool() {
               const activeIndex = stepMeta.findIndex((step) => step.key === guidedStep);
               const isDone = index < activeIndex;
               const isActive = item.key === guidedStep;
+              const canVisit = canVisitStep(item.key);
               return (
-                <div className={`${styles.progressItem} ${isActive ? styles.currentProgress : ""} ${isDone ? styles.doneProgress : ""}`} key={item.key}>
+                <button
+                  className={`${styles.progressItem} ${isActive ? styles.currentProgress : ""} ${isDone ? styles.doneProgress : ""}`}
+                  key={item.key}
+                  onClick={() => goToStep(item.key)}
+                  disabled={!canVisit || isActive}
+                  title={canVisit && !isActive ? `返回${item.label}` : item.label}
+                >
                   <span>{isDone ? <CheckCircle2 size={16} /> : index + 1}</span>
                   {item.label}
-                </div>
+                </button>
               );
             })}
           </section>
@@ -1241,6 +1271,7 @@ function ResultStep({
   onSelectResult,
   onCompareChange,
   onBack,
+  onBackToSofa,
   onRegenerate,
   onCorrect,
   isGenerating
@@ -1255,6 +1286,7 @@ function ResultStep({
   onSelectResult: (index: number) => void;
   onCompareChange: (value: number) => void;
   onBack: () => void;
+  onBackToSofa: () => void;
   onRegenerate: () => void;
   onCorrect: () => void;
   isGenerating: boolean;
@@ -1280,6 +1312,10 @@ function ResultStep({
         <button className={styles.secondaryButton} onClick={onBack}>
           <ChevronLeft size={16} />
           返回调整
+        </button>
+        <button className={styles.secondaryButton} onClick={onBackToSofa}>
+          <UploadCloud size={16} />
+          重新上传沙发
         </button>
         <a className={styles.secondaryButton} href={result.imageUrl} download={`${result.title}.jpg`}>
           <Download size={16} />
