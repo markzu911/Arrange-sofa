@@ -633,7 +633,7 @@ export function VillaSofaPlacementTool() {
               images={roomReferenceImages}
               onFiles={(files) => files.forEach((file) => handleUpload("room-reference", file))}
             />
-            <button className={styles.primaryButton} onClick={() => roomImage && autoAnalyzeRoom(roomImage)} disabled={!roomImage || isAnalyzingRoom}>
+            <button className={`${styles.primaryButton} ${styles.stepConfirmButton}`} onClick={() => roomImage && autoAnalyzeRoom(roomImage)} disabled={!roomImage || isAnalyzingRoom}>
               {isAnalyzingRoom ? <Loader2 className={styles.spin} size={18} /> : <CheckCircle2 size={18} />}
               确认房间图片，进入沙发上传
             </button>
@@ -665,7 +665,7 @@ export function VillaSofaPlacementTool() {
             images={sofaReferenceImages}
             onFiles={(files) => files.forEach((file) => handleUpload("sofa-reference", file))}
           />
-          <button className={styles.primaryButton} onClick={() => sofaImage && autoAnalyzeSofa(sofaImage)} disabled={!sofaImage || isAnalyzingSofa}>
+          <button className={`${styles.primaryButton} ${styles.stepConfirmButton}`} onClick={() => sofaImage && autoAnalyzeSofa(sofaImage)} disabled={!sofaImage || isAnalyzingSofa}>
             {isAnalyzingSofa ? <Loader2 className={styles.spin} size={18} /> : <CheckCircle2 size={18} />}
             确认沙发图片，生成方案
           </button>

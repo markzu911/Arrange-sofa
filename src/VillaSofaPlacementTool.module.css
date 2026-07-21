@@ -1036,6 +1036,11 @@
   width: 100%;
 }
 
+.stepConfirmButton {
+  align-self: start;
+  min-height: 42px;
+}
+
 .primaryButton:disabled,
 .primaryInlineButton:disabled {
   cursor: not-allowed;
