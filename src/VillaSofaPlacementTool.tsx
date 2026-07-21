@@ -302,8 +302,7 @@ export function VillaSofaPlacementTool() {
       if (!isStandaloneTrial) {
         await verifyIntegral(platform);
       }
-      const placeholderSofa = nextRoomImage;
-      const nextAnalysis = await analyzeScene(nextRoomImage, placeholderSofa, roomReferenceImages, settings.model, platform.context, platform.prompt, settings.notes);
+      const nextAnalysis = await analyzeScene(nextRoomImage, null, roomReferenceImages, settings.model, platform.context, platform.prompt, settings.notes);
       setAnalysis({
         ...nextAnalysis,
         sofaSummary: "等待上传沙发照片后补充沙发分析。"

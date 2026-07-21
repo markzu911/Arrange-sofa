@@ -4,8 +4,8 @@ const MAX_INPUT_SIZE = 20 * 1024 * 1024;
 const MAX_EDGE = 1200;
 const JPEG_QUALITY = 0.72;
 
-export const GEMINI_IMAGE_TARGET_BYTES = 650 * 1024;
-export const GEMINI_REFERENCE_TARGET_BYTES = 300 * 1024;
+export const GEMINI_IMAGE_TARGET_BYTES = 420 * 1024;
+export const GEMINI_REFERENCE_TARGET_BYTES = 160 * 1024;
 
 export async function compressImage(
   file: File,
@@ -23,17 +23,27 @@ export async function compressImage(
 
   const originalDataUrl = await readFileAsDataUrl(file);
   const img = await loadImage(originalDataUrl);
+  return renderCompressedImage(img, file.name.replace(/\.[^.]+$/, ".jpg"), maxEdge, quality, targetBytes);
+}
+
+function renderCompressedImage(
+  img: HTMLImageElement,
+  fileName: string,
+  maxEdge: number,
+  quality: number,
+  targetBytes: number
+): UploadedImage {
   let edge = maxEdge;
   let currentQuality = quality;
-  let compressed = drawJpeg(img, file.name.replace(/\.[^.]+$/, ".jpg"), edge, currentQuality);
-  while (compressed.size > targetBytes && (edge > 720 || currentQuality > 0.58)) {
-    if (currentQuality > 0.58) {
-      currentQuality = Math.max(0.58, currentQuality - 0.08);
+  let compressed = drawJpeg(img, fileName, edge, currentQuality);
+  while (compressed.size > targetBytes && (edge > 640 || currentQuality > 0.5)) {
+    if (currentQuality > 0.5) {
+      currentQuality = Math.max(0.5, currentQuality - 0.08);
     } else {
-      edge = Math.max(720, Math.round(edge * 0.85));
+      edge = Math.max(640, Math.round(edge * 0.82));
       currentQuality = quality;
     }
-    compressed = drawJpeg(img, file.name.replace(/\.[^.]+$/, ".jpg"), edge, currentQuality);
+    compressed = drawJpeg(img, fileName, edge, currentQuality);
   }
   return compressed;
 }
@@ -73,11 +83,22 @@ export async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
   return response.blob();
 }
 
+export async function compressDataUrlToImage(
+  dataUrl: string,
+  fileName: string,
+  maxEdge = MAX_EDGE,
+  quality = JPEG_QUALITY,
+  targetBytes = GEMINI_IMAGE_TARGET_BYTES
+): Promise<UploadedImage> {
+  const image = await loadImage(dataUrl);
+  return renderCompressedImage(image, fileName.replace(/\.[^.]+$/, ".jpg"), maxEdge, quality, targetBytes);
+}
+
 export async function compressDataUrlToBlob(
   dataUrl: string,
   maxEdge = 1600,
   quality = 0.86,
-  targetBytes = 1800 * 1024
+  targetBytes = 1200 * 1024
 ): Promise<Blob> {
   const image = await loadImage(dataUrl);
   let edge = maxEdge;

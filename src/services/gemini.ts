@@ -11,12 +11,12 @@ import type {
 } from "../types";
 import { perspectiveLabels } from "../constants";
 import { buildAnalysisPrompt, buildCameraVariationPrompt, buildGenerationPrompt, buildQualityPrompt } from "./prompt";
-import { assertDistinctCameraViews, removeGreenScreen } from "./image";
+import { assertDistinctCameraViews, compressDataUrlToImage, removeGreenScreen } from "./image";
 import { resolvePlacementPlan } from "./placement";
 
 export async function analyzeScene(
   roomImage: UploadedImage,
-  sofaImage: UploadedImage,
+  sofaImage: UploadedImage | null,
   roomReferenceImages: UploadedImage[],
   model: string,
   extraContext: string,
@@ -28,7 +28,7 @@ export async function analyzeScene(
     model,
     roomImage,
     roomReferenceImages,
-    sofaImage,
+    ...(sofaImage ? { sofaImage } : {}),
     systemPrompt: buildAnalysisPrompt(extraContext, extraPrompt, userRequirements)
   });
 
@@ -216,8 +216,7 @@ export async function extractSofaForeground(sofaImage: UploadedImage, settings: 
   const imageUrl = response.images.find((image) => image.perspective === "wide")?.imageUrl;
   if (!imageUrl) throw new Error("Gemini 未返回沙发前景图");
   const dataUrl = await removeGreenScreen(imageUrl);
-  const base64 = dataUrl.split(",")[1] || "";
-  return { ...sofaImage, fileName: `${sofaImage.fileName.replace(/\.[^.]+$/, "")}-foreground.png`, mimeType: "image/png", dataUrl, base64 };
+  return compressDataUrlToImage(dataUrl, `${sofaImage.fileName.replace(/\.[^.]+$/, "")}-foreground.jpg`, 820, 0.64, 300 * 1024);
 }
 
 export async function eraseExistingSofas(roomImage: UploadedImage, settings: PlacementSettings): Promise<UploadedImage> {
@@ -231,23 +230,7 @@ export async function eraseExistingSofas(roomImage: UploadedImage, settings: Pla
   });
   const imageUrl = response.images.find((image) => image.perspective === "wide")?.imageUrl;
   if (!imageUrl) throw new Error("Gemini 未返回干净房间场景图");
-  const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/s.exec(imageUrl);
-  if (!match) throw new Error("干净房间场景图格式异常");
-  const image = await new Promise<HTMLImageElement>((resolve, reject) => {
-    const element = new Image();
-    element.onload = () => resolve(element);
-    element.onerror = () => reject(new Error("干净房间场景图无法识别"));
-    element.src = imageUrl;
-  });
-  return {
-    fileName: `${roomImage.fileName.replace(/\.[^.]+$/, "")}-clear.jpg`,
-    mimeType: match[1] as UploadedImage["mimeType"],
-    size: Math.round((match[2].length * 3) / 4),
-    dataUrl: imageUrl,
-    base64: match[2],
-    width: image.width,
-    height: image.height
-  };
+  return compressDataUrlToImage(imageUrl, `${roomImage.fileName.replace(/\.[^.]+$/, "")}-clear.jpg`, 960, 0.66, 420 * 1024);
 }
 
 export async function checkGeneratedPlacement(
@@ -260,7 +243,7 @@ export async function checkGeneratedPlacement(
   extraContext: string,
   extraPrompt: string[]
 ): Promise<GenerationQualityCheck> {
-  const resultImage = dataUrlToImage(resultImageUrl);
+  const resultImage = await compressDataUrlToImage(resultImageUrl, "quality-check.jpg", 820, 0.64, 300 * 1024);
   const response = await postGemini<GeminiQualityResponse>({
     mode: "quality",
     model: settings.model,
