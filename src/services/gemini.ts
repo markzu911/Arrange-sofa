@@ -284,10 +284,15 @@ function dataUrlToImage(dataUrl: string): Pick<UploadedImage, "base64" | "mimeTy
 }
 
 async function postGemini<T>(payload: GeminiGenerateRequest): Promise<T> {
+  const body = JSON.stringify(payload);
+  const bodySize = new Blob([body]).size;
+  if (bodySize > 3.5 * 1024 * 1024) {
+    throw new Error("请求图片体积仍然过大，可能被主平台或 Vercel 拒绝。请减少补充角度图片，或上传分辨率更低的房间/沙发图后重试。");
+  }
   const response = await fetch("/api/gemini", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
+    body
   });
 
   const contentType = response.headers.get("content-type") || "";

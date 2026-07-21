@@ -19,7 +19,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { defaultSettings, perspectiveLabels, TOOL_COST, TOOL_NAME } from "./constants";
 import styles from "./VillaSofaPlacementTool.module.css";
 import { analyzeScene, checkGeneratedPlacement, eraseExistingSofas, extractSofaForeground, generatePlacementImages } from "./services/gemini";
-import { compressImage, dataUrlToBlob } from "./services/image";
+import { compressDataUrlToBlob, compressImage, GEMINI_IMAGE_TARGET_BYTES, GEMINI_REFERENCE_TARGET_BYTES } from "./services/image";
 import {
   consumeIntegral,
   createInitialPlatformContext,
@@ -257,7 +257,12 @@ export function VillaSofaPlacementTool() {
     setError("");
     setStatus("正在压缩图片...");
     try {
-      const image = await compressImage(file, kind === "room-reference" ? 960 : undefined, kind === "room-reference" ? 0.8 : undefined);
+      const image = await compressImage(
+        file,
+        kind === "room-reference" ? 900 : undefined,
+        kind === "room-reference" ? 0.68 : undefined,
+        kind === "room-reference" ? GEMINI_REFERENCE_TARGET_BYTES : GEMINI_IMAGE_TARGET_BYTES
+      );
       setResults([]);
       if (kind === "room") {
         setAgentFlowStarted(true);
@@ -435,7 +440,7 @@ export function VillaSofaPlacementTool() {
     setStatus("生成完成，正在扣费后的结果图入库...");
     const settled = await Promise.all(generated.map(async (item, index) => {
       try {
-        const blob = await dataUrlToBlob(item.imageUrl);
+        const blob = await compressDataUrlToBlob(item.imageUrl);
         const saved = await persistResultImage(platform, blob, `${item.perspective}-${Date.now()}-${index + 1}.jpg`);
         setResults((current) => current.map((result) => result.id === item.id ? {
           ...result,

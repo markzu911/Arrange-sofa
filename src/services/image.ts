@@ -1,10 +1,18 @@
 import type { ImageRatio, PerspectiveOption, UploadedImage } from "../types";
 
 const MAX_INPUT_SIZE = 20 * 1024 * 1024;
-const MAX_EDGE = 1600;
-const JPEG_QUALITY = 0.85;
+const MAX_EDGE = 1200;
+const JPEG_QUALITY = 0.72;
 
-export async function compressImage(file: File, maxEdge = MAX_EDGE, quality = JPEG_QUALITY): Promise<UploadedImage> {
+export const GEMINI_IMAGE_TARGET_BYTES = 650 * 1024;
+export const GEMINI_REFERENCE_TARGET_BYTES = 300 * 1024;
+
+export async function compressImage(
+  file: File,
+  maxEdge = MAX_EDGE,
+  quality = JPEG_QUALITY,
+  targetBytes = GEMINI_IMAGE_TARGET_BYTES
+): Promise<UploadedImage> {
   if (!file.type.startsWith("image/")) {
     throw new Error("请上传图片文件");
   }
@@ -15,6 +23,22 @@ export async function compressImage(file: File, maxEdge = MAX_EDGE, quality = JP
 
   const originalDataUrl = await readFileAsDataUrl(file);
   const img = await loadImage(originalDataUrl);
+  let edge = maxEdge;
+  let currentQuality = quality;
+  let compressed = drawJpeg(img, file.name.replace(/\.[^.]+$/, ".jpg"), edge, currentQuality);
+  while (compressed.size > targetBytes && (edge > 720 || currentQuality > 0.58)) {
+    if (currentQuality > 0.58) {
+      currentQuality = Math.max(0.58, currentQuality - 0.08);
+    } else {
+      edge = Math.max(720, Math.round(edge * 0.85));
+      currentQuality = quality;
+    }
+    compressed = drawJpeg(img, file.name.replace(/\.[^.]+$/, ".jpg"), edge, currentQuality);
+  }
+  return compressed;
+}
+
+function drawJpeg(img: HTMLImageElement, fileName: string, maxEdge: number, quality: number): UploadedImage {
   const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
   const width = Math.max(1, Math.round(img.width * scale));
   const height = Math.max(1, Math.round(img.height * scale));
@@ -34,7 +58,7 @@ export async function compressImage(file: File, maxEdge = MAX_EDGE, quality = JP
   const size = Math.round((base64.length * 3) / 4);
 
   return {
-    fileName: file.name.replace(/\.[^.]+$/, ".jpg"),
+    fileName,
     mimeType: "image/jpeg",
     size,
     dataUrl,
@@ -47,6 +71,41 @@ export async function compressImage(file: File, maxEdge = MAX_EDGE, quality = JP
 export async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
   const response = await fetch(dataUrl);
   return response.blob();
+}
+
+export async function compressDataUrlToBlob(
+  dataUrl: string,
+  maxEdge = 1600,
+  quality = 0.86,
+  targetBytes = 1800 * 1024
+): Promise<Blob> {
+  const image = await loadImage(dataUrl);
+  let edge = maxEdge;
+  let currentQuality = quality;
+  let blob = await drawJpegBlob(image, edge, currentQuality);
+  while (blob.size > targetBytes && (edge > 960 || currentQuality > 0.68)) {
+    if (currentQuality > 0.68) {
+      currentQuality = Math.max(0.68, currentQuality - 0.08);
+    } else {
+      edge = Math.max(960, Math.round(edge * 0.85));
+      currentQuality = quality;
+    }
+    blob = await drawJpegBlob(image, edge, currentQuality);
+  }
+  return blob;
+}
+
+function drawJpegBlob(image: HTMLImageElement, maxEdge: number, quality: number): Promise<Blob> {
+  const scale = Math.min(1, maxEdge / Math.max(image.width, image.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(image.width * scale));
+  canvas.height = Math.max(1, Math.round(image.height * scale));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("浏览器不支持结果图压缩");
+  ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("结果图压缩失败")), "image/jpeg", quality);
+  });
 }
 
 export async function removeGreenScreen(dataUrl: string): Promise<string> {

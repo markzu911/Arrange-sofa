@@ -5,6 +5,8 @@ dist/
 .env.*.local
 vite-dev.log
 vite-dev.err.log
+vercel-dev.log
+vercel-dev.err.log
 trial-server.log
 trial-server.err.log
 *.tsbuildinfo

@@ -104,7 +104,10 @@ async function handleGemini(req, res) {
   const apiKey = process.env.GEMINI_API_KEY;
 
   if (!apiKey) {
-    sendJson(res, 200, createMockResponse(body));
+    sendJson(res, 500, {
+      success: false,
+      message: "未配置 GEMINI_API_KEY，当前没有调用真实 Gemini API。请在 .env.local 或 Vercel 环境变量中配置后重启服务。"
+    });
     return;
   }
 
