@@ -9,6 +9,12 @@ class ImageGenerationUnavailable extends Error {
   }
 }
 
+class CameraContinuationUnavailable extends Error {
+  constructor() {
+    super("当前模型未返回可延续的多视角生成会话。为避免不同视角把沙发重绘成相似款，本次已停止生成，请重新生成。");
+  }
+}
+
 class GeminiUpstreamError extends Error {
   constructor(readonly statusCode: number, message: string) {
     super(message);
@@ -69,6 +75,8 @@ export default async function handler(req: JsonRequest, res: ServerResponse) {
   } catch (error) {
     const statusCode = error instanceof GeminiUpstreamError
       ? error.statusCode
+      : error instanceof CameraContinuationUnavailable
+        ? 503
       : error instanceof ImageGenerationUnavailable
         ? 503
         : 500;
@@ -224,15 +232,18 @@ async function generateImagesWithInteractions(body: GeminiRequestBody, apiKey: s
   const canContinueInteraction = selectedApi === "interactions" && interactionId;
   if (!masterImage) throw new Error("Gemini 未返回可用的试摆主图");
   const results = [{ perspective: "wide", title: "远景（房间全景）", imageUrl: `data:${masterImage.mimeType};base64,${masterImage.data}` }];
-  await Promise.all(requested.filter((item) => item !== "wide").map(async (perspective) => {
+  const variationPerspectives = requested.filter((item) => item !== "wide");
+  if (variationPerspectives.length && !canContinueInteraction) {
+    throw new CameraContinuationUnavailable();
+  }
+
+  await Promise.all(variationPerspectives.map(async (perspective) => {
     const variationBody: GeminiRequestBody = {
       ...body,
       roomImage: { base64: masterImage.data, mimeType: masterImage.mimeType },
       roomReferenceImages: []
     };
-    const variationResponse = canContinueInteraction
-      ? await requestImageInteraction(variationBody, apiKey, selectedModel, perspective, interactionId)
-      : await requestImageGenerateContent(variationBody, apiKey, selectedModel, perspective);
+    const variationResponse = await requestImageInteraction(variationBody, apiKey, selectedModel, perspective, interactionId);
     const variationRaw = await variationResponse.text();
     if (!variationResponse.ok) throw toGeminiUpstreamError(variationResponse.status, variationRaw, "镜头生成失败，请稍后重试");
     const variationData = JSON.parse(variationRaw);
