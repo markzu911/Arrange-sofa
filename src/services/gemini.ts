@@ -24,8 +24,8 @@ export async function analyzeScene(
   extraPrompt: string[],
   userRequirements = ""
 ): Promise<SceneAnalysis> {
-  const scopedRoomReferences = roomReferenceImages.slice(0, sofaImage ? 1 : 3);
-  const scopedSofaReferences = sofaReferenceImages.slice(0, sofaImage ? 2 : 0);
+  const scopedRoomReferences = roomReferenceImages.slice(0, sofaImage ? 0 : 2);
+  const scopedSofaReferences = sofaReferenceImages.slice(0, 0);
   const response = await postGemini<GeminiAnalyzeResponse>({
     mode: "analyze",
     model,
@@ -135,8 +135,8 @@ export async function generatePlacementImages(
   extraContext: string,
   extraPrompt: string[]
 ): Promise<GeminiImageResponse["images"]> {
-  const scopedRoomReferences = roomReferenceImages.slice(0, 1);
-  const scopedSofaReferences = sofaReferenceImages.slice(0, 2);
+  const scopedRoomReferences = roomReferenceImages.slice(0, 0);
+  const scopedSofaReferences = sofaReferenceImages.slice(0, 1);
   const requestedPerspectives = (["wide", "medium", "close"] as const).filter((perspective) => settings.perspectives.includes(perspective));
   const masterSettings: PlacementSettings = { ...settings, perspectives: requestedPerspectives };
   const perspectivePrompts = Object.fromEntries([
@@ -258,7 +258,7 @@ export async function extractSofaForeground(sofaImage: UploadedImage, settings: 
   const imageUrl = response.images.find((image) => image.perspective === "wide")?.imageUrl;
   if (!imageUrl) throw new Error("Gemini 未返回沙发前景图");
   const dataUrl = await removeGreenScreen(imageUrl);
-  return compressDataUrlToImage(dataUrl, `${sofaImage.fileName.replace(/\.[^.]+$/, "")}-foreground.jpg`, 720, 0.58, 180 * 1024);
+  return compressDataUrlToImage(dataUrl, `${sofaImage.fileName.replace(/\.[^.]+$/, "")}-foreground.jpg`, 820, 0.62, 260 * 1024);
 }
 
 export async function eraseExistingSofas(roomImage: UploadedImage, settings: PlacementSettings): Promise<UploadedImage> {
@@ -272,7 +272,7 @@ export async function eraseExistingSofas(roomImage: UploadedImage, settings: Pla
   });
   const imageUrl = response.images.find((image) => image.perspective === "wide")?.imageUrl;
   if (!imageUrl) throw new Error("Gemini 未返回干净房间场景图");
-  return compressDataUrlToImage(imageUrl, `${roomImage.fileName.replace(/\.[^.]+$/, "")}-clear.jpg`, 820, 0.6, 240 * 1024);
+  return compressDataUrlToImage(imageUrl, `${roomImage.fileName.replace(/\.[^.]+$/, "")}-clear.jpg`, 900, 0.62, 320 * 1024);
 }
 
 export async function checkGeneratedPlacement(
@@ -315,7 +315,7 @@ function dataUrlToImage(dataUrl: string): Pick<UploadedImage, "base64" | "mimeTy
 async function postGemini<T>(payload: GeminiGenerateRequest): Promise<T> {
   const body = JSON.stringify(payload);
   const bodySize = new Blob([body]).size;
-  if (bodySize > 950 * 1024) {
+  if (bodySize > 1.35 * 1024 * 1024) {
     throw new Error("请求图片体积仍然过大，已在发送前拦截。请减少补充图片数量，或重新上传体积更小的房间/沙发图后再试。");
   }
   const response = await fetch("/api/gemini", {
