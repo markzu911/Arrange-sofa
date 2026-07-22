@@ -669,6 +669,7 @@ export function VillaSofaPlacementTool() {
       {guidedStep === "result" && currentResult && (
         <ResultStep
           roomImage={roomImage}
+          sofaImage={sofaImage}
           useVirtualRoom={useVirtualRoom}
           result={currentResult}
           results={results}
@@ -1208,6 +1209,7 @@ function ReviewStep({
 
 function ResultStep({
   roomImage,
+  sofaImage,
   useVirtualRoom,
   result,
   results,
@@ -1223,6 +1225,7 @@ function ResultStep({
   isGenerating
 }: {
   roomImage: UploadedImage | null;
+  sofaImage: UploadedImage | null;
   useVirtualRoom: boolean;
   result: GeneratedImageResult;
   results: GeneratedImageResult[];
@@ -1238,7 +1241,17 @@ function ResultStep({
   isGenerating: boolean;
 }) {
   const [isViewerOpen, setIsViewerOpen] = useState(false);
-  const [viewerImage, setViewerImage] = useState<"result" | "original">("result");
+  const [viewerImage, setViewerImage] = useState<"result" | "original" | "sofa">("result");
+  const viewerSrc = viewerImage === "sofa" && sofaImage
+    ? sofaImage.dataUrl
+    : viewerImage === "original" && roomImage
+      ? roomImage.dataUrl
+      : result.imageUrl;
+  const viewerAlt = viewerImage === "sofa"
+    ? "沙发产品图"
+    : viewerImage === "original"
+      ? "原始房间图"
+      : "生成效果图";
 
   return (
     <section className={styles.resultPage}>
@@ -1290,10 +1303,11 @@ function ResultStep({
             <div>
               <button className={viewerImage === "result" ? styles.selectedChoice : ""} onClick={() => setViewerImage("result")}>效果图</button>
               {!useVirtualRoom && roomImage && <button className={viewerImage === "original" ? styles.selectedChoice : ""} onClick={() => setViewerImage("original")}>原图</button>}
+              {sofaImage && <button className={viewerImage === "sofa" ? styles.selectedChoice : ""} onClick={() => setViewerImage("sofa")}>产品图</button>}
             </div>
             <button className={styles.viewerClose} onClick={() => setIsViewerOpen(false)} aria-label="关闭查看"><X size={22} /></button>
           </div>
-          <img src={viewerImage === "result" || !roomImage ? result.imageUrl : roomImage.dataUrl} alt={viewerImage === "result" || !roomImage ? "生成效果图" : "原始房间图"} />
+          <img src={viewerSrc} alt={viewerAlt} />
         </div>
       )}
     </section>
