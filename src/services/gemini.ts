@@ -124,6 +124,7 @@ function readableList(value: unknown, fallback: string[]): string[] {
 export async function generatePlacementImages(
   roomImage: UploadedImage,
   sofaImage: UploadedImage,
+  productReferenceImage: UploadedImage,
   roomReferenceImages: UploadedImage[],
   analysis: SceneAnalysis,
   settings: PlacementSettings,
@@ -146,6 +147,7 @@ export async function generatePlacementImages(
     roomImage,
     roomReferenceImages,
     sofaImage,
+    productReferenceImage,
     analysis,
     settings: masterSettings,
     systemPrompt: "请生成一张用于派生多个镜头的远景主图。",
@@ -178,6 +180,7 @@ export async function generatePlacementImages(
       roomImage,
       roomReferenceImages,
       sofaImage,
+      productReferenceImage,
       analysis,
       settings: masterSettings,
       systemPrompt: `${antiLazyPrompt}\n\n请生成一张用于派生多个镜头的远景主图。`,

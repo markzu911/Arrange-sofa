@@ -33,6 +33,7 @@ interface GeminiRequestBody {
   roomImage?: { base64: string; mimeType: string };
   roomReferenceImages?: Array<{ base64: string; mimeType: string }>;
   sofaImage?: { base64: string; mimeType: string };
+  productReferenceImage?: { base64: string; mimeType: string };
   resultImage?: { base64: string; mimeType: string };
   systemPrompt?: string;
   perspectivePrompts?: Record<string, string>;
@@ -147,6 +148,15 @@ async function handleGemini(req: JsonRequest, res: ServerResponse) {
       inlineData: {
         mimeType: body.sofaImage.mimeType || "image/jpeg",
         data: body.sofaImage.base64
+      }
+    });
+  }
+
+  if (body.productReferenceImage?.base64) {
+    parts.push({
+      inlineData: {
+        mimeType: body.productReferenceImage.mimeType || "image/jpeg",
+        data: body.productReferenceImage.base64
       }
     });
   }
@@ -303,6 +313,9 @@ function requestImageGenerateContent(body: GeminiRequestBody, apiKey: string, mo
   if (body.sofaImage?.base64) {
     parts.push({ inlineData: { mimeType: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 } });
   }
+  if (body.productReferenceImage?.base64) {
+    parts.push({ inlineData: { mimeType: body.productReferenceImage.mimeType || "image/jpeg", data: body.productReferenceImage.base64 } });
+  }
   return fetchWithDiagnostics(`generateContent:${model}:${perspective}`, `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${apiKey}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -329,23 +342,25 @@ function requestImageInteraction(body: GeminiRequestBody, apiKey: string, model:
   const input = isAssetEdit
     ? [
         { type: "text", text: prompt },
-        ...(body.mode === "erase" && body.roomImage?.base64
-          ? [{ type: "image", mime_type: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 }]
-          : body.sofaImage?.base64
-            ? [{ type: "image", mime_type: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 }]
-            : [])
+          ...(body.mode === "erase" && body.roomImage?.base64
+            ? [{ type: "image", mime_type: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 }]
+            : body.sofaImage?.base64
+              ? [{ type: "image", mime_type: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 }]
+              : [])
       ]
     : previousInteractionId
       ? [
           { type: "text", text: `${prompt}\n\n这是主图受限相机变换，不是新场景生成。只生成指定镜头：${perspective}。请直接输出最终效果图。` },
           ...(body.roomImage?.base64 ? [{ type: "image", mime_type: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 }] : []),
-          ...(body.sofaImage?.base64 ? [{ type: "image", mime_type: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 }] : [])
+          ...(body.sofaImage?.base64 ? [{ type: "image", mime_type: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 }] : []),
+          ...(body.productReferenceImage?.base64 ? [{ type: "image", mime_type: body.productReferenceImage.mimeType || "image/jpeg", data: body.productReferenceImage.base64 }] : [])
         ]
       : [
           { type: "text", text: `${prompt}\n\n请先生成锁定布局的远景主图。` },
           ...(body.roomImage?.base64 ? [{ type: "image", mime_type: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 }] : []),
           ...((body.roomReferenceImages || []).filter((image) => image.base64).map((image) => ({ type: "image", mime_type: image.mimeType || "image/jpeg", data: image.base64 }))),
-          ...(body.sofaImage?.base64 ? [{ type: "image", mime_type: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 }] : [])
+          ...(body.sofaImage?.base64 ? [{ type: "image", mime_type: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 }] : []),
+          ...(body.productReferenceImage?.base64 ? [{ type: "image", mime_type: body.productReferenceImage.mimeType || "image/jpeg", data: body.productReferenceImage.base64 }] : [])
         ];
   return fetchWithDiagnostics(`interactions:${model}:${perspective}:${previousInteractionId ? "variation" : "master"}`, "https://generativelanguage.googleapis.com/v1beta/interactions", {
     method: "POST",

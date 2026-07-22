@@ -443,7 +443,7 @@ export function VillaSofaPlacementTool() {
         : settings;
       const images = useVirtualRoom
         ? await generateVirtualRoomImages(sofaImage, analysis, generationSettings, platform.context, platform.prompt)
-        : await generatePlacementImages(clearedRoomImage as UploadedImage, sofaForegroundImage as UploadedImage, [], analysis, generationSettings, platform.context, platform.prompt);
+        : await generatePlacementImages(clearedRoomImage as UploadedImage, sofaForegroundImage as UploadedImage, sofaImage, [], analysis, generationSettings, platform.context, platform.prompt);
       if (images.length !== generationSettings.perspectives.length) {
         throw new Error(`视角结果不完整：已选择 ${generationSettings.perspectives.length} 个视角，但仅生成 ${images.length} 张图片。请重新生成。`);
       }
