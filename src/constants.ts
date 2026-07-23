@@ -21,7 +21,7 @@ export const defaultSettings: PlacementSettings = {
 
 export const perspectiveLabels: Record<PerspectiveOption, string> = {
   wide: "远景（房间全景）",
-  medium: "中近景（完整看沙发）",
+  medium: "中近景（沙发与环境）",
   close: "近景（产品细节）"
 };
 

@@ -180,22 +180,26 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-export async function assertDistinctCameraViews(masterImageUrl: string, variations: string[]): Promise<void> {
+export async function assertDistinctCameraViews(
+  masterImageUrl: string,
+  variations: Array<{ perspective: string; imageUrl: string }>
+): Promise<void> {
   if (!variations.length) return;
   const masterImage = await loadImage(masterImageUrl);
   const master = imagePixels(masterImage);
   const cropScales = [0.72, 0.62, 0.5, 0.4, 0.32];
-  for (const variationUrl of variations) {
-    const variationImage = await loadImage(variationUrl);
+  for (const variationView of variations) {
+    const variationImage = await loadImage(variationView.imageUrl);
     const variation = imagePixels(variationImage);
     const normalizedDifference = pixelDifference(master, variation);
     if (normalizedDifference < 0.025) {
       throw new Error("镜头变化不足，已拦截本次结果。请重新生成，系统不会把近乎相同的画面当作不同视角。");
     }
+    if (variationView.perspective === "close") continue;
     for (const scale of cropScales) {
       const crop = imagePixels(masterImage, scale);
       if (pixelDifference(crop, variation) < 0.035) {
-        throw new Error("镜头疑似只是远景裁切或缩放，已拦截本次结果。请重新生成真实不同机位。");
+        throw new Error("中近景疑似只是远景裁切或缩放，已拦截本次结果。请重新生成更自然的中近景。");
       }
     }
   }

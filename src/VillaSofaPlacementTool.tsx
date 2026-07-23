@@ -423,7 +423,8 @@ export function VillaSofaPlacementTool() {
     }
   }
 
-  async function handleGenerate(correctionPrompt = "") {
+  async function handleGenerate(correctionPrompt: unknown = "") {
+    const correctionText = typeof correctionPrompt === "string" ? correctionPrompt.trim() : "";
     if (!sofaImage || !analysis || (!useVirtualRoom && (!roomImage || !sofaForegroundImage || !clearedRoomImage))) {
       setError("请先完成房间和沙发上传");
       return;
@@ -438,8 +439,8 @@ export function VillaSofaPlacementTool() {
       if (!useVirtualRoom && !isStandaloneTrial) {
         await verifyIntegral(platform);
       }
-      const generationSettings = correctionPrompt
-        ? { ...settings, notes: `${settings.notes}\n质检纠正要求：${correctionPrompt}`.trim() }
+      const generationSettings = correctionText
+        ? { ...settings, notes: `${settings.notes}\n质检纠正要求：${correctionText}`.trim() }
         : settings;
       const images = useVirtualRoom
         ? await generateVirtualRoomImages(sofaImage, analysis, generationSettings, platform.context, platform.prompt)
@@ -652,7 +653,7 @@ export function VillaSofaPlacementTool() {
           onPerspectiveToggle={togglePerspective}
           onConfirmPlan={() => setReviewSubstep("settings")}
           onBackToPlan={() => setReviewSubstep("plan")}
-          onGenerate={handleGenerate}
+          onGenerate={() => handleGenerate()}
           isGenerating={isGenerating}
           isRefreshingPlan={isAnalyzingSofa}
         />
@@ -680,7 +681,7 @@ export function VillaSofaPlacementTool() {
           onCompareChange={setCompareValue}
           onBack={() => { setReviewSubstep("settings"); setGuidedStep("review"); }}
           onBackToSofa={() => goToStep("sofa")}
-          onRegenerate={handleGenerate}
+          onRegenerate={() => handleGenerate()}
           onCorrect={() => handleGenerate(currentResult.quality?.correctionPrompt || "")}
           isGenerating={isGenerating}
         />

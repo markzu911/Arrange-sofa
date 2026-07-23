@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 const SAAS_ORIGIN = process.env.SAAS_API_ORIGIN || "http://aibigtree.com";
 const BODY_LIMIT = 20 * 1024 * 1024;
+const IMAGE_REQUEST_TIMEOUT_MS = Number(process.env.GEMINI_IMAGE_REQUEST_TIMEOUT_MS || 25_000);
 
 class ImageGenerationUnavailable extends Error {
   constructor() {
@@ -248,7 +249,7 @@ async function generateImagesWithInteractions(body: GeminiRequestBody, apiKey: s
     const variationData = JSON.parse(variationRaw);
     const variationImage = extractInteractionImage(variationData) || extractGeneratedContentImage(variationData);
     if (!variationImage) throw new Error("Gemini 未返回有效镜头图片");
-    results.push({ perspective, title: perspective === "medium" ? "中近景" : "近景（主要展示沙发）", imageUrl: `data:${variationImage.mimeType};base64,${variationImage.data}` });
+    results.push({ perspective, title: perspective === "medium" ? "中近景（沙发与环境）" : "近景（产品细节）", imageUrl: `data:${variationImage.mimeType};base64,${variationImage.data}` });
   }));
   results.sort((left, right) => requested.indexOf(left.perspective) - requested.indexOf(right.perspective));
   return results;
@@ -271,7 +272,8 @@ async function requestImageWithFallback(body: GeminiRequestBody, apiKey: string,
       return { ...primary, model, api: "interactions" };
     }
   } catch (error) {
-    if (!model.includes("pro-image") || !isRequestTimeout(error)) throw error;
+    if (error instanceof ImageGenerationUnavailable || isRequestTimeout(error)) throw new ImageGenerationUnavailable();
+    throw error;
   }
 
   const fallbackModel = process.env.GEMINI_IMAGE_MODEL_FALLBACK || process.env.GEMINI_IMAGE_MODEL || "gemini-2.5-flash-image";
@@ -302,6 +304,8 @@ function shouldTryGenerateContent(status: number, raw: string) {
 }
 
 function requestImageGenerateContent(body: GeminiRequestBody, apiKey: string, model: string, perspective: string) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), IMAGE_REQUEST_TIMEOUT_MS);
   const prompt = body.perspectivePrompts?.[perspective] || body.systemPrompt || "";
   const parts: GeminiPart[] = [{ text: prompt }];
   if (body.roomImage?.base64) {
@@ -319,6 +323,7 @@ function requestImageGenerateContent(body: GeminiRequestBody, apiKey: string, mo
   return fetchWithDiagnostics(`generateContent:${model}:${perspective}`, `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${apiKey}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    signal: controller.signal,
     body: JSON.stringify({
       contents: [{ role: "user", parts }],
       generationConfig: {
@@ -331,12 +336,15 @@ function requestImageGenerateContent(body: GeminiRequestBody, apiKey: string, mo
         }
       }
     })
-  });
+  }).catch((error) => {
+    if (isRequestTimeout(error)) throw new ImageGenerationUnavailable();
+    throw error;
+  }).finally(() => clearTimeout(timeout));
 }
 
 function requestImageInteraction(body: GeminiRequestBody, apiKey: string, model: string, perspective: string, previousInteractionId?: string) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 75_000);
+  const timeout = setTimeout(() => controller.abort(), IMAGE_REQUEST_TIMEOUT_MS);
   const isAssetEdit = body.mode === "cutout" || body.mode === "erase";
   const prompt = body.perspectivePrompts?.[perspective] || body.systemPrompt || "";
   const input = isAssetEdit
@@ -377,6 +385,9 @@ function requestImageInteraction(body: GeminiRequestBody, apiKey: string, model:
         image_size: body.settings?.clarity || "1K"
       }
     })
+  }).catch((error) => {
+    if (isRequestTimeout(error)) throw new ImageGenerationUnavailable();
+    throw error;
   }).finally(() => clearTimeout(timeout));
 }
 
@@ -387,6 +398,7 @@ async function fetchWithDiagnostics(label: string, url: string, init: RequestIni
       return await fetch(url, init);
     } catch (error) {
       lastError = error;
+      if (isRequestTimeout(error)) throw error;
       console.error("[api/proxy] upstream fetch failed", {
         label,
         attempt,
