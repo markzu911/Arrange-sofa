@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 const SAAS_ORIGIN = process.env.SAAS_API_ORIGIN || "http://aibigtree.com";
 const BODY_LIMIT = 20 * 1024 * 1024;
-const IMAGE_REQUEST_TIMEOUT_MS = Number(process.env.GEMINI_IMAGE_REQUEST_TIMEOUT_MS || 25_000);
+const IMAGE_REQUEST_TIMEOUT_MS = Number(process.env.GEMINI_IMAGE_REQUEST_TIMEOUT_MS || 75_000);
 
 class ImageGenerationUnavailable extends Error {
   constructor() {
