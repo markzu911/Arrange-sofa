@@ -118,6 +118,48 @@ export function buildCameraVariationPrompt(
   ].filter(Boolean).join("\n");
 }
 
+export function buildPlacementBackgroundPrompt(
+  analysis: SceneAnalysis,
+  settings: PlacementSettings,
+  perspective: string,
+  extraContext = "",
+  extraPrompt: string[] = []
+): string {
+  const cameraInstruction: Record<string, string> = {
+    wide: "远景背景板：保留完整房间和主要空间关系，镜头位于房间入口或角落。",
+    medium: "中近景背景板：从远景机位前移，并向左前方或右前方小幅移动，形成真实但克制的机位差异。",
+    close: "近景背景板：继续靠近未来沙发摆放区域，并从与中近景不同的轻微前侧角度拍摄，只保留少量房间上下文。"
+  };
+  return [
+    "这是室内试摆的无沙发背景板任务。输入图是已经清场的房间；只生成同一房间、同一摆放方案下的真实不同机位背景板。",
+    "画面中不得生成任何沙发、躺椅、人体模特或其他会遮挡目标沙发区域的主体家具。目标沙发将由系统以原始产品像素在后续合成，因此不得自行绘制、猜测、替代或添加沙发。",
+    "必须保留房间建筑结构、门窗、地面、墙面、主要家具、光照和通道关系；中近景与近景必须是重新生成的真实机位，不能裁切、缩放或复用远景构图。",
+    `目标背景镜头：${perspectiveLabels[perspective as keyof typeof perspectiveLabels] ?? perspective}。${cameraInstruction[perspective] ?? cameraInstruction.medium}`,
+    `锁定试摆计划：${JSON.stringify(analysis.placementPlan)}`,
+    settings.notes ? `用户要求：${settings.notes}` : "",
+    extraContext ? `平台上下文：${extraContext}` : "",
+    extraPrompt.length ? `平台补充关键词：${extraPrompt.join("、")}` : ""
+  ].filter(Boolean).join("\n");
+}
+
+export function buildVirtualRoomBackgroundPrompt(
+  analysis: SceneAnalysis,
+  settings: PlacementSettings,
+  perspective: string,
+  extraContext = "",
+  extraPrompt: string[] = []
+): string {
+  const styleLabel = virtualRoomStyleLabels[settings.virtualRoomStyle];
+  return [
+    "这是虚拟客厅的无沙发背景板任务。生成同一套完整、真实的客厅空间，但画面中不得出现沙发、躺椅或人体模特。目标沙发将由系统以原始产品像素在后续合成。",
+    `装修风格：${styleLabel}。`,
+    `目标镜头：${perspectiveLabels[perspective as keyof typeof perspectiveLabels] ?? perspective}。远景展示大部分空间；中近景向未来沙发区域小幅前移和侧移；近景继续靠近该区域并采用不同轻微前侧机位。所有镜头必须真实重新生成，不得裁切或缩放复用。`,
+    `锁定试摆计划：${JSON.stringify(analysis.placementPlan)}`,
+    extraContext ? `平台上下文：${extraContext}` : "",
+    extraPrompt.length ? `平台补充关键词：${extraPrompt.join("、")}` : ""
+  ].filter(Boolean).join("\n");
+}
+
 export function buildVirtualRoomPrompt(
   analysis: SceneAnalysis,
   settings: PlacementSettings,

@@ -201,6 +201,142 @@ export async function assertDistinctCameraViews(masterImageUrl: string, variatio
   }
 }
 
+export async function createWhiteBackgroundProductLayer(source: UploadedImage): Promise<UploadedImage> {
+  const image = await loadImage(source.dataUrl);
+  const canvas = document.createElement("canvas");
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) throw new Error("浏览器不支持产品前景处理");
+
+  ctx.drawImage(image, 0, 0);
+  const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const width = canvas.width;
+  const height = canvas.height;
+  const visited = new Uint8Array(width * height);
+  const queue: number[] = [];
+
+  const isWhiteBackgroundPixel = (index: number) => {
+    const red = pixels.data[index * 4];
+    const green = pixels.data[index * 4 + 1];
+    const blue = pixels.data[index * 4 + 2];
+    return red >= 238 && green >= 238 && blue >= 238 && Math.max(red, green, blue) - Math.min(red, green, blue) <= 18;
+  };
+  const enqueue = (x: number, y: number) => {
+    if (x < 0 || y < 0 || x >= width || y >= height) return;
+    const position = y * width + x;
+    if (visited[position] || !isWhiteBackgroundPixel(position)) return;
+    visited[position] = 1;
+    queue.push(position);
+  };
+
+  for (let x = 0; x < width; x += 1) {
+    enqueue(x, 0);
+    enqueue(x, height - 1);
+  }
+  for (let y = 1; y < height - 1; y += 1) {
+    enqueue(0, y);
+    enqueue(width - 1, y);
+  }
+
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    const position = queue[cursor];
+    const x = position % width;
+    const y = Math.floor(position / width);
+    enqueue(x - 1, y);
+    enqueue(x + 1, y);
+    enqueue(x, y - 1);
+    enqueue(x, y + 1);
+  }
+
+  for (const position of queue) pixels.data[position * 4 + 3] = 0;
+  ctx.putImageData(pixels, 0, 0);
+  const dataUrl = canvas.toDataURL("image/png");
+  const base64 = dataUrl.split(",")[1] ?? "";
+  return {
+    fileName: source.fileName.replace(/\.[^.]+$/, "-product.png"),
+    mimeType: "image/png",
+    size: Math.round((base64.length * 3) / 4),
+    dataUrl,
+    base64,
+    width,
+    height
+  };
+}
+
+export async function composeLockedProduct(
+  backgroundUrl: string,
+  productLayer: UploadedImage,
+  perspective: PerspectiveOption
+): Promise<string> {
+  const [background, product] = await Promise.all([loadImage(backgroundUrl), loadImage(productLayer.dataUrl)]);
+  const canvas = document.createElement("canvas");
+  canvas.width = background.width;
+  canvas.height = background.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("浏览器不支持产品合成");
+  ctx.drawImage(background, 0, 0);
+
+  const bounds = alphaBounds(product);
+  if (!bounds) throw new Error("未能从白底产品图识别出沙发主体，请上传背景更干净、主体更完整的产品图");
+  const scaleByPerspective: Record<PerspectiveOption, number> = { wide: 0.42, medium: 0.68, close: 1.12 };
+  const desiredWidth = canvas.width * scaleByPerspective[perspective];
+  const drawScale = desiredWidth / bounds.width;
+  const drawWidth = bounds.width * drawScale;
+  const drawHeight = bounds.height * drawScale;
+  const centerX = canvas.width * (perspective === "wide" ? 0.5 : perspective === "medium" ? 0.52 : 0.56);
+  const floorY = canvas.height * (perspective === "wide" ? 0.82 : perspective === "medium" ? 0.86 : 0.9);
+  const drawX = centerX - drawWidth / 2;
+  const drawY = floorY - drawHeight;
+
+  ctx.save();
+  ctx.filter = "blur(14px)";
+  ctx.fillStyle = "rgba(20, 24, 30, 0.24)";
+  ctx.beginPath();
+  ctx.ellipse(centerX, floorY + 5, drawWidth * 0.42, Math.max(8, drawHeight * 0.045), 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  ctx.drawImage(
+    product,
+    bounds.x,
+    bounds.y,
+    bounds.width,
+    bounds.height,
+    drawX,
+    drawY,
+    drawWidth,
+    drawHeight
+  );
+  return canvas.toDataURL("image/png");
+}
+
+function alphaBounds(image: HTMLImageElement) {
+  const canvas = document.createElement("canvas");
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return null;
+  ctx.drawImage(image, 0, 0);
+  const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  let minX = canvas.width;
+  let minY = canvas.height;
+  let maxX = -1;
+  let maxY = -1;
+  for (let y = 0; y < canvas.height; y += 1) {
+    for (let x = 0; x < canvas.width; x += 1) {
+      if (data[(y * canvas.width + x) * 4 + 3] < 24) continue;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    }
+  }
+  return maxX >= minX && maxY >= minY
+    ? { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 }
+    : null;
+}
+
 export async function assertNoDuplicateCameraViews(masterImageUrl: string, variations: string[]): Promise<void> {
   if (!variations.length) return;
   const master = imagePixels(await loadImage(masterImageUrl));

@@ -10,7 +10,7 @@ import type {
   UploadedImage
 } from "../types";
 import { perspectiveLabels } from "../constants";
-import { buildAnalysisPrompt, buildCameraVariationPrompt, buildGenerationPrompt, buildQualityPrompt, buildVirtualRoomPrompt } from "./prompt";
+import { buildAnalysisPrompt, buildCameraVariationPrompt, buildGenerationPrompt, buildPlacementBackgroundPrompt, buildQualityPrompt, buildVirtualRoomBackgroundPrompt, buildVirtualRoomPrompt } from "./prompt";
 import { assertNoDuplicateCameraViews, compressDataUrlToImage, removeGreenScreen } from "./image";
 import { resolvePlacementPlan } from "./placement";
 
@@ -195,6 +195,76 @@ export async function generateVirtualRoomImages(
   });
 
   const imageByPerspective = new Map(response.images.map((image) => [image.perspective, image.imageUrl]));
+  const masterImageUrl = imageByPerspective.get("wide");
+  if (masterImageUrl) {
+    await assertNoDuplicateCameraViews(
+      masterImageUrl,
+      requestedPerspectives.filter((perspective) => perspective !== "wide").flatMap((perspective) => {
+        const imageUrl = imageByPerspective.get(perspective);
+        return imageUrl ? [imageUrl] : [];
+      })
+    );
+  }
+  return requestedPerspectives
+    .map((perspective) => ({ perspective, title: perspectiveLabels[perspective], imageUrl: imageByPerspective.get(perspective) }))
+    .filter((image): image is { perspective: PlacementSettings["perspectives"][number]; title: string; imageUrl: string } => Boolean(image.imageUrl));
+}
+
+export async function generatePlacementBackgrounds(
+  roomImage: UploadedImage,
+  analysis: SceneAnalysis,
+  settings: PlacementSettings,
+  extraContext: string,
+  extraPrompt: string[]
+): Promise<GeminiImageResponse["images"]> {
+  const requestedPerspectives = (["wide", "medium", "close"] as const).filter((perspective) => settings.perspectives.includes(perspective));
+  const masterSettings: PlacementSettings = { ...settings, perspectives: requestedPerspectives, addHumanModel: false };
+  const perspectivePrompts = Object.fromEntries(requestedPerspectives.map((perspective) => [
+    perspective,
+    buildPlacementBackgroundPrompt(analysis, masterSettings, perspective, extraContext, extraPrompt)
+  ]));
+  const response = await postGemini<GeminiImageResponse>({
+    mode: "generate",
+    model: settings.model,
+    roomImage,
+    analysis,
+    settings: masterSettings,
+    backgroundOnly: true,
+    systemPrompt: "请生成用于产品锁定合成的无沙发多机位房间背景板。",
+    perspectivePrompts
+  });
+  return assertAndMapCameraViews(response.images, requestedPerspectives);
+}
+
+export async function generateVirtualRoomBackgrounds(
+  analysis: SceneAnalysis,
+  settings: PlacementSettings,
+  extraContext: string,
+  extraPrompt: string[]
+): Promise<GeminiImageResponse["images"]> {
+  const requestedPerspectives = (["wide", "medium", "close"] as const).filter((perspective) => settings.perspectives.includes(perspective));
+  const masterSettings: PlacementSettings = { ...settings, perspectives: requestedPerspectives, addHumanModel: false };
+  const perspectivePrompts = Object.fromEntries(requestedPerspectives.map((perspective) => [
+    perspective,
+    buildVirtualRoomBackgroundPrompt(analysis, masterSettings, perspective, extraContext, extraPrompt)
+  ]));
+  const response = await postGemini<GeminiImageResponse>({
+    mode: "generate",
+    model: settings.model,
+    analysis,
+    settings: masterSettings,
+    backgroundOnly: true,
+    systemPrompt: "请生成用于产品锁定合成的无沙发虚拟客厅多机位背景板。",
+    perspectivePrompts
+  });
+  return assertAndMapCameraViews(response.images, requestedPerspectives);
+}
+
+async function assertAndMapCameraViews(
+  images: GeminiImageResponse["images"],
+  requestedPerspectives: PlacementSettings["perspectives"]
+): Promise<GeminiImageResponse["images"]> {
+  const imageByPerspective = new Map(images.map((image) => [image.perspective, image.imageUrl]));
   const masterImageUrl = imageByPerspective.get("wide");
   if (masterImageUrl) {
     await assertNoDuplicateCameraViews(
