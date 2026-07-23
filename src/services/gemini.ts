@@ -162,11 +162,11 @@ export async function generatePlacementImages(
       masterImageUrl,
       requestedPerspectives.filter((perspective) => perspective !== "wide").flatMap((perspective) => {
         const imageUrl = imageByPerspective.get(perspective);
-        return imageUrl ? [{ perspective, imageUrl }] : [];
+        return imageUrl ? [imageUrl] : [];
       })
     );
   } catch (error) {
-    const antiLazyPrompt = "上一轮结果因镜头差异不足被系统拒绝：请在保持目标沙发产品完全一致的前提下重新生成多视角。产品一致性高于视角变化；允许中近景和近景有合理局部裁切，但不能返回几乎相同的画面，也不能为了换视角改变沙发款式、结构、颜色或材质。";
+    const antiLazyPrompt = "上一轮结果因模型偷懒被系统拒绝：中近景/近景只是远景的裁切、缩放或局部放大，没有真实改变相机机位。请重新生成真实不同机位；禁止返回任何裁切、缩放、局部放大或几乎相同构图。";
     const retryPerspectivePrompts = Object.fromEntries([
       ["wide", `${antiLazyPrompt}\n\n${buildGenerationPrompt(analysis, masterSettings, "wide", extraContext, extraPrompt)}`],
       ...requestedPerspectives.filter((perspective) => perspective !== "wide").map((perspective) => [
@@ -193,12 +193,12 @@ export async function generatePlacementImages(
       retryMasterImageUrl,
       requestedPerspectives.filter((perspective) => perspective !== "wide").flatMap((perspective) => {
         const imageUrl = retryImageByPerspective.get(perspective);
-        return imageUrl ? [{ perspective, imageUrl }] : [];
+        return imageUrl ? [imageUrl] : [];
       })
     ).catch(() => {
       throw error instanceof Error
         ? error
-        : new Error("镜头变化不足，已拦截本次结果。请重新生成，系统不会把近乎相同的画面当作不同视角。");
+        : new Error("镜头变化不足，已拦截本次结果。请重新生成，系统不会把裁切或缩放当作不同视角。");
     });
     return requestedPerspectives
       .map((perspective) => ({ perspective, title: perspectiveLabels[perspective], imageUrl: retryImageByPerspective.get(perspective) }))
