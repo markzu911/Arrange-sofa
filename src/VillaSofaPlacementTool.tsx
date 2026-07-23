@@ -429,11 +429,6 @@ export function VillaSofaPlacementTool() {
       setError("请先完成房间和沙发上传");
       return;
     }
-    if (settings.perspectives.length >= 3 && settings.clarity !== "1K") {
-      setError("三视角同时生成 2K/4K 容易超时，请先选择 1K，或减少视角后再生成。");
-      setStatus("当前配置过重，已停止发送生成请求");
-      return;
-    }
 
     setError("");
     setIsGenerating(true);
