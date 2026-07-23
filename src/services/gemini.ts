@@ -11,7 +11,7 @@ import type {
 } from "../types";
 import { perspectiveLabels } from "../constants";
 import { buildAnalysisPrompt, buildCameraVariationPrompt, buildGenerationPrompt, buildQualityPrompt, buildVirtualRoomPrompt } from "./prompt";
-import { assertDistinctCameraViews, compressDataUrlToImage, removeGreenScreen } from "./image";
+import { compressDataUrlToImage, removeGreenScreen } from "./image";
 import { resolvePlacementPlan } from "./placement";
 
 export async function analyzeScene(
@@ -154,56 +154,7 @@ export async function generatePlacementImages(
     perspectivePrompts
   });
 
-  const masterImageUrl = response.images.find((image) => image.perspective === "wide")?.imageUrl;
-  if (!masterImageUrl) throw new Error("未获得远景主图，无法校验镜头结果");
   const imageByPerspective = new Map(response.images.map((image) => [image.perspective, image.imageUrl]));
-  try {
-    await assertDistinctCameraViews(
-      masterImageUrl,
-      requestedPerspectives.filter((perspective) => perspective !== "wide").flatMap((perspective) => {
-        const imageUrl = imageByPerspective.get(perspective);
-        return imageUrl ? [imageUrl] : [];
-      })
-    );
-  } catch (error) {
-    const antiLazyPrompt = "上一轮结果因模型偷懒被系统拒绝：中近景/近景只是远景的裁切、缩放或局部放大，没有真实改变相机机位。请重新生成真实不同机位；禁止返回任何裁切、缩放、局部放大或几乎相同构图。";
-    const retryPerspectivePrompts = Object.fromEntries([
-      ["wide", `${antiLazyPrompt}\n\n${buildGenerationPrompt(analysis, masterSettings, "wide", extraContext, extraPrompt)}`],
-      ...requestedPerspectives.filter((perspective) => perspective !== "wide").map((perspective) => [
-        perspective,
-        `${antiLazyPrompt}\n\n${buildCameraVariationPrompt(analysis, masterSettings, perspective, extraContext, extraPrompt)}`
-      ])
-    ]);
-    const retryResponse = await postGemini<GeminiImageResponse>({
-      mode: "generate",
-      model: settings.model,
-      roomImage,
-      roomReferenceImages,
-      sofaImage,
-      productReferenceImage,
-      analysis,
-      settings: masterSettings,
-      systemPrompt: `${antiLazyPrompt}\n\n请生成一张用于派生多个镜头的远景主图。`,
-      perspectivePrompts: retryPerspectivePrompts
-    });
-    const retryMasterImageUrl = retryResponse.images.find((image) => image.perspective === "wide")?.imageUrl;
-    if (!retryMasterImageUrl) throw new Error("未获得远景主图，无法校验镜头结果");
-    const retryImageByPerspective = new Map(retryResponse.images.map((image) => [image.perspective, image.imageUrl]));
-    await assertDistinctCameraViews(
-      retryMasterImageUrl,
-      requestedPerspectives.filter((perspective) => perspective !== "wide").flatMap((perspective) => {
-        const imageUrl = retryImageByPerspective.get(perspective);
-        return imageUrl ? [imageUrl] : [];
-      })
-    ).catch(() => {
-      throw error instanceof Error
-        ? error
-        : new Error("镜头变化不足，已拦截本次结果。请重新生成，系统不会把裁切或缩放当作不同视角。");
-    });
-    return requestedPerspectives
-      .map((perspective) => ({ perspective, title: perspectiveLabels[perspective], imageUrl: retryImageByPerspective.get(perspective) }))
-      .filter((image): image is { perspective: PlacementSettings["perspectives"][number]; title: string; imageUrl: string } => Boolean(image.imageUrl));
-  }
   return requestedPerspectives
     .map((perspective) => ({ perspective, title: perspectiveLabels[perspective], imageUrl: imageByPerspective.get(perspective) }))
     .filter((image): image is { perspective: PlacementSettings["perspectives"][number]; title: string; imageUrl: string } => Boolean(image.imageUrl));
