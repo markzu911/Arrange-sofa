@@ -248,7 +248,7 @@ async function generateImagesWithInteractions(body: GeminiRequestBody, apiKey: s
     const variationData = JSON.parse(variationRaw);
     const variationImage = extractInteractionImage(variationData) || extractGeneratedContentImage(variationData);
     if (!variationImage) throw new Error("Gemini 未返回有效镜头图片");
-    results.push({ perspective, title: perspective === "medium" ? "中近景" : "近景（主要展示沙发）", imageUrl: `data:${variationImage.mimeType};base64,${variationImage.data}` });
+    results.push({ perspective, title: perspective === "medium" ? "中近景（沙发与环境）" : "近景（产品细节）", imageUrl: `data:${variationImage.mimeType};base64,${variationImage.data}` });
   }));
   results.sort((left, right) => requested.indexOf(left.perspective) - requested.indexOf(right.perspective));
   return results;
@@ -350,13 +350,13 @@ function requestImageInteraction(body: GeminiRequestBody, apiKey: string, model:
       ]
     : previousInteractionId
       ? [
-          { type: "text", text: `${prompt}\n\n这是主图受限相机变换，不是新场景生成。只生成指定镜头：${perspective}。请直接输出最终效果图。` },
+          { type: "text", text: `${prompt}\n\n这是主图受限相机变换，不是新场景生成。只生成指定镜头：${perspective}。第一张远景主图只用于参考房间、摆放、尺度、光影和主要家具关系；沙发产品身份必须以最后一张原始产品参考图为准。如果远景主图里的沙发与产品参考图不一致，请按产品参考图纠正。请直接输出最终效果图。` },
           ...(body.roomImage?.base64 ? [{ type: "image", mime_type: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 }] : []),
           ...(body.sofaImage?.base64 ? [{ type: "image", mime_type: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 }] : []),
           ...(body.productReferenceImage?.base64 ? [{ type: "image", mime_type: body.productReferenceImage.mimeType || "image/jpeg", data: body.productReferenceImage.base64 }] : [])
         ]
       : [
-          { type: "text", text: `${prompt}\n\n请先生成锁定布局的远景主图。` },
+          { type: "text", text: `${prompt}\n\n请先生成锁定布局的远景主图。远景必须展示完整目标沙发和大部分环境；沙发产品身份必须以原始产品参考图为准。` },
           ...(body.roomImage?.base64 ? [{ type: "image", mime_type: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 }] : []),
           ...((body.roomReferenceImages || []).filter((image) => image.base64).map((image) => ({ type: "image", mime_type: image.mimeType || "image/jpeg", data: image.base64 }))),
           ...(body.sofaImage?.base64 ? [{ type: "image", mime_type: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 }] : []),
