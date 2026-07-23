@@ -201,6 +201,17 @@ export async function assertDistinctCameraViews(masterImageUrl: string, variatio
   }
 }
 
+export async function assertNoDuplicateCameraViews(masterImageUrl: string, variations: string[]): Promise<void> {
+  if (!variations.length) return;
+  const master = imagePixels(await loadImage(masterImageUrl));
+  for (const variationUrl of variations) {
+    const variation = imagePixels(await loadImage(variationUrl));
+    if (pixelDifference(master, variation) < 0.025) {
+      throw new Error("镜头结果与远景几乎完全相同，请重新生成真实不同机位的画面。");
+    }
+  }
+}
+
 function pixelDifference(left: Uint8ClampedArray, right: Uint8ClampedArray): number {
   let totalDifference = 0;
   for (let index = 0; index < left.length; index += 4) {

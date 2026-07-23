@@ -245,7 +245,7 @@ async function generateImagesWithInteractions(body: GeminiRequestBody, apiKey: s
     const variationData = JSON.parse(variationRaw);
     const variationImage = extractInteractionImage(variationData) || extractGeneratedContentImage(variationData);
     if (!variationImage) throw new Error("Gemini 未返回有效镜头图片");
-    results.push({ perspective, title: perspective === "medium" ? "中近景（沙发与环境）" : "近景（产品细节）", imageUrl: `data:${variationImage.mimeType};base64,${variationImage.data}` });
+    results.push({ perspective, title: perspective === "medium" ? "中近景（沙发主体）" : "近景（产品细节）", imageUrl: `data:${variationImage.mimeType};base64,${variationImage.data}` });
   }));
   results.sort((left, right) => requested.indexOf(left.perspective) - requested.indexOf(right.perspective));
   return results;
@@ -301,17 +301,11 @@ function shouldTryGenerateContent(status: number, raw: string) {
 function requestImageGenerateContent(body: GeminiRequestBody, apiKey: string, model: string, perspective: string) {
   const prompt = body.perspectivePrompts?.[perspective] || body.systemPrompt || "";
   const parts: GeminiPart[] = [{ text: prompt }];
-  if (body.roomImage?.base64) {
-    parts.push({ inlineData: { mimeType: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 } });
-  }
-  for (const image of body.roomReferenceImages || []) {
-    if (image.base64) parts.push({ inlineData: { mimeType: image.mimeType || "image/jpeg", data: image.base64 } });
-  }
-  if (body.sofaImage?.base64) {
-    parts.push({ inlineData: { mimeType: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 } });
-  }
-  if (body.productReferenceImage?.base64) {
-    parts.push({ inlineData: { mimeType: body.productReferenceImage.mimeType || "image/jpeg", data: body.productReferenceImage.base64 } });
+  const images = body.isCameraVariation
+    ? [body.productReferenceImage, body.sofaImage, body.roomImage]
+    : [body.roomImage, ...(body.roomReferenceImages || []), body.sofaImage, body.productReferenceImage];
+  for (const image of images) {
+    if (image?.base64) parts.push({ inlineData: { mimeType: image.mimeType || "image/jpeg", data: image.base64 } });
   }
   return fetchWithDiagnostics(`generateContent:${model}:${perspective}`, `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${apiKey}`, {
     method: "POST",
@@ -336,6 +330,9 @@ function requestImageInteraction(body: GeminiRequestBody, apiKey: string, model:
   const timeout = setTimeout(() => controller.abort(), 75_000);
   const isAssetEdit = body.mode === "cutout" || body.mode === "erase";
   const prompt = body.perspectivePrompts?.[perspective] || body.systemPrompt || "";
+  const cameraVariationInstruction = body.productReferenceImage?.base64
+    ? "这是同一试摆方案的换镜头任务，不继承前一张生成图的产品样式。第一张是原始沙发产品参考图，是产品身份唯一依据；第二张是沙发前景；第三张远景图只用于参考房间、摆放、尺度、光影和家具关系。如果远景图中的沙发与第一张产品参考图不一致，必须按第一张产品参考图纠正。"
+    : "这是同一虚拟试摆方案的换镜头任务，不继承前一张生成图的产品样式。第一张是原始沙发产品参考图，是产品身份唯一依据；第二张远景图只用于参考房间、摆放、尺度、光影和家具关系。如果远景图中的沙发与第一张产品参考图不一致，必须按第一张产品参考图纠正。";
   const input = isAssetEdit
     ? [
         { type: "text", text: prompt },
@@ -347,10 +344,10 @@ function requestImageInteraction(body: GeminiRequestBody, apiKey: string, model:
       ]
     : body.isCameraVariation
       ? [
-          { type: "text", text: `${prompt}\n\n这是同一试摆方案的换镜头任务，不继承前一张生成图的产品样式。第一张远景图只用于参考房间、摆放、尺度、光影和家具关系；第三张原始产品参考图是沙发产品身份的唯一依据。如果远景图中的沙发与产品参考图不一致，必须按产品参考图纠正。只生成指定镜头：${perspective}。请直接输出最终效果图。` },
-          ...(body.roomImage?.base64 ? [{ type: "image", mime_type: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 }] : []),
+          { type: "text", text: `${prompt}\n\n${cameraVariationInstruction}只生成指定镜头：${perspective}。请直接输出最终效果图。` },
+          ...(body.productReferenceImage?.base64 ? [{ type: "image", mime_type: body.productReferenceImage.mimeType || "image/jpeg", data: body.productReferenceImage.base64 }] : []),
           ...(body.sofaImage?.base64 ? [{ type: "image", mime_type: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 }] : []),
-          ...(body.productReferenceImage?.base64 ? [{ type: "image", mime_type: body.productReferenceImage.mimeType || "image/jpeg", data: body.productReferenceImage.base64 }] : [])
+          ...(body.roomImage?.base64 ? [{ type: "image", mime_type: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 }] : [])
         ]
       : [
           { type: "text", text: `${prompt}\n\n请先生成锁定布局的远景主图。远景必须展示完整目标沙发和大部分环境；沙发产品身份必须以原始产品参考图为准。` },

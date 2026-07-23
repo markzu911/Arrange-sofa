@@ -11,7 +11,7 @@ import type {
 } from "../types";
 import { perspectiveLabels } from "../constants";
 import { buildAnalysisPrompt, buildCameraVariationPrompt, buildGenerationPrompt, buildQualityPrompt, buildVirtualRoomPrompt } from "./prompt";
-import { compressDataUrlToImage, removeGreenScreen } from "./image";
+import { assertNoDuplicateCameraViews, compressDataUrlToImage, removeGreenScreen } from "./image";
 import { resolvePlacementPlan } from "./placement";
 
 export async function analyzeScene(
@@ -155,6 +155,16 @@ export async function generatePlacementImages(
   });
 
   const imageByPerspective = new Map(response.images.map((image) => [image.perspective, image.imageUrl]));
+  const masterImageUrl = imageByPerspective.get("wide");
+  if (masterImageUrl) {
+    await assertNoDuplicateCameraViews(
+      masterImageUrl,
+      requestedPerspectives.filter((perspective) => perspective !== "wide").flatMap((perspective) => {
+        const imageUrl = imageByPerspective.get(perspective);
+        return imageUrl ? [imageUrl] : [];
+      })
+    );
+  }
   return requestedPerspectives
     .map((perspective) => ({ perspective, title: perspectiveLabels[perspective], imageUrl: imageByPerspective.get(perspective) }))
     .filter((image): image is { perspective: PlacementSettings["perspectives"][number]; title: string; imageUrl: string } => Boolean(image.imageUrl));
@@ -185,6 +195,16 @@ export async function generateVirtualRoomImages(
   });
 
   const imageByPerspective = new Map(response.images.map((image) => [image.perspective, image.imageUrl]));
+  const masterImageUrl = imageByPerspective.get("wide");
+  if (masterImageUrl) {
+    await assertNoDuplicateCameraViews(
+      masterImageUrl,
+      requestedPerspectives.filter((perspective) => perspective !== "wide").flatMap((perspective) => {
+        const imageUrl = imageByPerspective.get(perspective);
+        return imageUrl ? [imageUrl] : [];
+      })
+    );
+  }
   return requestedPerspectives
     .map((perspective) => ({ perspective, title: perspectiveLabels[perspective], imageUrl: imageByPerspective.get(perspective) }))
     .filter((image): image is { perspective: PlacementSettings["perspectives"][number]; title: string; imageUrl: string } => Boolean(image.imageUrl));
