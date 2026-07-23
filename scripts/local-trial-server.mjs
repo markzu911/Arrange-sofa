@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 const root = normalize(join(fileURLToPath(import.meta.url), "..", ".."));
 const distDir = join(root, "dist");
 const preferredPort = Number(process.env.PORT || 5174);
-const IMAGE_REQUEST_TIMEOUT_MS = Number(process.env.GEMINI_IMAGE_REQUEST_TIMEOUT_MS || 75_000);
+const IMAGE_REQUEST_TIMEOUT_MS = Number(process.env.GEMINI_IMAGE_REQUEST_TIMEOUT_MS || 25_000);
 
 class ImageGenerationUnavailable extends Error {
   constructor() {

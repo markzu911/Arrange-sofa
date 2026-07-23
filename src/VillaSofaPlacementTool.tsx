@@ -429,6 +429,11 @@ export function VillaSofaPlacementTool() {
       setError("请先完成房间和沙发上传");
       return;
     }
+    if (settings.perspectives.length >= 3 && settings.clarity !== "1K") {
+      setError("三视角同时生成 2K/4K 容易超时，请先选择 1K，或减少视角后再生成。");
+      setStatus("当前配置过重，已停止发送生成请求");
+      return;
+    }
 
     setError("");
     setIsGenerating(true);
@@ -439,12 +444,9 @@ export function VillaSofaPlacementTool() {
       if (!useVirtualRoom && !isStandaloneTrial) {
         await verifyIntegral(platform);
       }
-      const safeSettings = settings.perspectives.length >= 3 && settings.clarity === "4K"
-        ? { ...settings, clarity: "2K" as const }
-        : settings;
       const generationSettings = correctionText
-        ? { ...safeSettings, notes: `${safeSettings.notes}\n质检纠正要求：${correctionText}`.trim() }
-        : safeSettings;
+        ? { ...settings, notes: `${settings.notes}\n质检纠正要求：${correctionText}`.trim() }
+        : settings;
       const images = useVirtualRoom
         ? await generateVirtualRoomImages(sofaImage, analysis, generationSettings, platform.context, platform.prompt)
         : await generatePlacementImages(clearedRoomImage as UploadedImage, sofaForegroundImage as UploadedImage, sofaImage, [], analysis, generationSettings, platform.context, platform.prompt);
@@ -549,12 +551,9 @@ export function VillaSofaPlacementTool() {
 
   function updateSettings(nextSettings: PlacementSettings) {
     const styleChanged = nextSettings.virtualRoomStyle !== settings.virtualRoomStyle;
-    const safeSettings = nextSettings.perspectives.length >= 3 && nextSettings.clarity === "4K"
-      ? { ...nextSettings, clarity: "2K" as const }
-      : nextSettings;
-    setSettings(safeSettings);
+    setSettings(nextSettings);
     if (useVirtualRoom && styleChanged) {
-      setAnalysis(createVirtualRoomAnalysis(virtualRoomStyleLabels[safeSettings.virtualRoomStyle]));
+      setAnalysis(createVirtualRoomAnalysis(virtualRoomStyleLabels[nextSettings.virtualRoomStyle]));
     }
   }
 
@@ -567,12 +566,7 @@ export function VillaSofaPlacementTool() {
     setSettings((current) => {
       const exists = current.perspectives.includes(value);
       const next = exists ? current.perspectives.filter((item) => item !== value) : [...current.perspectives, value];
-      const perspectives: PlacementSettings["perspectives"] = next.length ? next : ["medium"];
-      return {
-        ...current,
-        perspectives,
-        clarity: perspectives.length >= 3 && current.clarity === "4K" ? "2K" : current.clarity
-      };
+      return { ...current, perspectives: next.length ? next : ["medium"] };
     });
   }
 
