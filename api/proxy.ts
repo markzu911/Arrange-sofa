@@ -118,56 +118,39 @@ async function handleGemini(req: JsonRequest, res: ServerResponse) {
 
   const model = mapModel(body.model, body.mode);
 
-  const parts: GeminiPart[] = [
-    { text: body.systemPrompt || "" }
-  ];
+  // For analyze/quality/cutout/erase modes, use generateContent API with
+  // interleaved labels so Gemini can distinguish room vs sofa images.
+  const parts: GeminiPart[] = [];
 
+  // Images + labels first, then prompt at end (same order as generate mode)
   if (body.roomImage?.base64) {
-    parts.push({
-      inlineData: {
-        mimeType: body.roomImage.mimeType || "image/jpeg",
-        data: body.roomImage.base64
-      }
-    });
+    parts.push({ text: "IMAGE 1 [REFERENCE ROOM ENVIRONMENT]:" });
+    parts.push({ inlineData: { mimeType: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 } });
   }
 
   for (const image of body.roomReferenceImages || []) {
     if (image.base64) {
-      parts.push({
-        inlineData: {
-          mimeType: image.mimeType || "image/jpeg",
-          data: image.base64
-        }
-      });
+      parts.push({ inlineData: { mimeType: image.mimeType || "image/jpeg", data: image.base64 } });
     }
   }
 
   if (body.sofaImage?.base64) {
-    parts.push({
-      inlineData: {
-        mimeType: body.sofaImage.mimeType || "image/jpeg",
-        data: body.sofaImage.base64
-      }
-    });
+    parts.push({ text: "IMAGE 2 [REFERENCE SOFA PRODUCT]:" });
+    parts.push({ inlineData: { mimeType: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 } });
   }
 
   if (body.productReferenceImage?.base64) {
-    parts.push({
-      inlineData: {
-        mimeType: body.productReferenceImage.mimeType || "image/jpeg",
-        data: body.productReferenceImage.base64
-      }
-    });
+    parts.push({ text: "IMAGE 3 [PRODUCT IDENTITY REFERENCE]:" });
+    parts.push({ inlineData: { mimeType: body.productReferenceImage.mimeType || "image/jpeg", data: body.productReferenceImage.base64 } });
   }
 
   if (body.resultImage?.base64) {
-    parts.push({
-      inlineData: {
-        mimeType: body.resultImage.mimeType || "image/jpeg",
-        data: body.resultImage.base64
-      }
-    });
+    parts.push({ text: "IMAGE 4 [GENERATED RESULT TO EVALUATE]:" });
+    parts.push({ inlineData: { mimeType: body.resultImage.mimeType || "image/jpeg", data: body.resultImage.base64 } });
   }
+
+  // Prompt at the end
+  parts.push({ text: body.systemPrompt || "" });
 
   if (body.mode === "generate") {
     const images = await generateImagesWithInteractions(body, apiKey, model);
@@ -247,20 +230,25 @@ async function generateImagesWithInteractions(body: GeminiRequestBody, apiKey: s
 }
 
 async function requestImageWithFallback(body: GeminiRequestBody, apiKey: string, model: string, perspective: string) {
+  // Following the floor lamp project: use generateContent API as PRIMARY path.
+  // The floor lamp project uses client.models.generateContent() — this is the stable,
+  // well-supported API that properly handles interleaved text+image parts.
+  // Interactions API is experimental and may not process text labels between images
+  // with the same weight as generateContent.
   let primary: { response: Response; raw: string } | undefined;
   try {
-    const response = await requestImageInteraction(body, apiKey, model, perspective);
+    const response = await requestImageGenerateContent(body, apiKey, model, perspective);
     primary = { response, raw: await response.text() };
     if (primary.response.ok) {
-      return { ...primary, model, api: "interactions" };
+      return { ...primary, model, api: "generateContent" };
     }
-    if (shouldTryGenerateContent(primary.response.status, primary.raw)) {
-      const fallbackResponse = await requestImageGenerateContent(body, apiKey, model, perspective);
+    if (shouldTryInteractions(primary.response.status, primary.raw)) {
+      const fallbackResponse = await requestImageInteraction(body, apiKey, model, perspective);
       const fallbackRaw = await fallbackResponse.text();
-      if (fallbackResponse.ok) return { response: fallbackResponse, raw: fallbackRaw, model, api: "generateContent" };
+      if (fallbackResponse.ok) return { response: fallbackResponse, raw: fallbackRaw, model, api: "interactions" };
     }
     if (!isHighDemand(primary.response.status, primary.raw) || !model.includes("pro-image")) {
-      return { ...primary, model, api: "interactions" };
+      return { ...primary, model, api: "generateContent" };
     }
   } catch (error) {
     if (!model.includes("pro-image") || !isRequestTimeout(error)) throw error;
@@ -268,20 +256,20 @@ async function requestImageWithFallback(body: GeminiRequestBody, apiKey: string,
 
   const fallbackModel = process.env.GEMINI_IMAGE_MODEL_FALLBACK || process.env.GEMINI_IMAGE_MODEL || "gemini-2.5-flash-image";
   if (fallbackModel === model) {
-    if (primary) return { ...primary, model, api: "interactions" };
+    if (primary) return { ...primary, model, api: "generateContent" };
     throw new ImageGenerationUnavailable();
   }
 
   try {
-    const response = await requestImageInteraction(body, apiKey, fallbackModel, perspective);
+    const response = await requestImageGenerateContent(body, apiKey, fallbackModel, perspective);
     const raw = await response.text();
-    if (!response.ok && shouldTryGenerateContent(response.status, raw)) {
-      const fallbackResponse = await requestImageGenerateContent(body, apiKey, fallbackModel, perspective);
+    if (!response.ok && shouldTryInteractions(response.status, raw)) {
+      const fallbackResponse = await requestImageInteraction(body, apiKey, fallbackModel, perspective);
       const fallbackRaw = await fallbackResponse.text();
-      if (fallbackResponse.ok) return { response: fallbackResponse, raw: fallbackRaw, model: fallbackModel, api: "generateContent" };
+      if (fallbackResponse.ok) return { response: fallbackResponse, raw: fallbackRaw, model: fallbackModel, api: "interactions" };
     }
     if (!response.ok && isHighDemand(response.status, raw)) throw new ImageGenerationUnavailable();
-    return { response, raw, model: fallbackModel, api: "interactions" };
+    return { response, raw, model: fallbackModel, api: "generateContent" };
   } catch (error) {
     if (error instanceof ImageGenerationUnavailable) throw error;
     if (isRequestTimeout(error)) throw new ImageGenerationUnavailable();
@@ -289,7 +277,8 @@ async function requestImageWithFallback(body: GeminiRequestBody, apiKey: string,
   }
 }
 
-function shouldTryGenerateContent(status: number, raw: string) {
+function shouldTryInteractions(status: number, raw: string) {
+  // If generateContent fails due to model/image not supported, try Interactions API as fallback
   return status === 400 && /not available in your current location|available-regions|not supported|unsupported|not found/i.test(raw);
 }
 
@@ -297,9 +286,8 @@ function requestImageGenerateContent(body: GeminiRequestBody, apiKey: string, mo
   const prompt = body.systemPrompt || "";
   const parts: GeminiPart[] = [];
 
-  // Same interleaved approach as requestImageInteraction
-  parts.push({ text: prompt });
-
+  // Following the floor lamp project: images + labels FIRST, prompt LAST.
+  // This ensures Gemini establishes visual context before reading instructions.
   if (body.roomImage?.base64) {
     parts.push({ text: "IMAGE 1 [REFERENCE ROOM ENVIRONMENT]:" });
     parts.push({ inlineData: { mimeType: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 } });
@@ -315,6 +303,9 @@ function requestImageGenerateContent(body: GeminiRequestBody, apiKey: string, mo
     parts.push({ text: "IMAGE 3 [PRODUCT IDENTITY REFERENCE]:" });
     parts.push({ inlineData: { mimeType: body.productReferenceImage.mimeType || "image/jpeg", data: body.productReferenceImage.base64 } });
   }
+
+  // Prompt comes at the END — same order as floor lamp project
+  parts.push({ text: prompt });
   return fetchWithDiagnostics(`generateContent:${model}:${perspective}`, `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${apiKey}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -369,15 +360,16 @@ function requestImageInteraction(body: GeminiRequestBody, apiKey: string, model:
 }
 
 /** Build interleaved input parts following the floor lamp project's approach.
- *  Each image gets a clear text label (e.g. "IMAGE 1 [REFERENCE ROOM]") so
- *  Gemini can distinguish room images from product reference images. */
+ *  CRITICAL: Images + labels come FIRST, prompt comes LAST.
+ *  Gemini processes multimodal input sequentially — seeing images first establishes
+ *  visual context, then the detailed prompt at the end tells it how to process them.
+ *  This order ensures camera perspective instructions (wide/medium/close) are read
+ *  AFTER Gemini has already "seen" both images, preventing perspective instructions
+ *  from being diluted or ignored. */
 function buildInterleavedInput(prompt: string, body: GeminiRequestBody) {
   const parts: Array<{ type: string; text?: string; mime_type?: string; data?: string }> = [];
 
-  // The full prompt comes first — it already contains detailed camera & product instructions
-  parts.push({ type: "text", text: prompt });
-
-  // IMAGE 1: Room environment
+  // IMAGE 1: Room environment — comes FIRST
   if (body.roomImage?.base64) {
     parts.push({ type: "text", text: "IMAGE 1 [REFERENCE ROOM ENVIRONMENT]:" });
     parts.push({ type: "image", mime_type: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 });
@@ -396,11 +388,15 @@ function buildInterleavedInput(prompt: string, body: GeminiRequestBody) {
     parts.push({ type: "image", mime_type: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 });
   }
 
-  // IMAGE 3: Product reference (if different from sofa image — for virtual rooms, same image is sent twice for emphasis)
+  // IMAGE 3: Product reference (if different from sofa image)
   if (body.productReferenceImage?.base64 && body.productReferenceImage.base64 !== body.sofaImage?.base64) {
     parts.push({ type: "text", text: "IMAGE 3 [PRODUCT IDENTITY REFERENCE - 产品身份唯一依据]:" });
     parts.push({ type: "image", mime_type: body.productReferenceImage.mimeType || "image/jpeg", data: body.productReferenceImage.base64 });
   }
+
+  // The full prompt comes LAST — this is the key difference from our previous implementation.
+  // Following the floor lamp project's approach exactly.
+  parts.push({ type: "text", text: prompt });
 
   return parts;
 }

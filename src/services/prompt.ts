@@ -101,7 +101,6 @@ export function buildGenerationPrompt(
     `A professional, ultra-high-resolution interior design photograph.`,
     `Your task is to generate a new room scene by placing the provided target sofa into the uploaded room environment.`,
     sofaPlacementSystemPrompt,
-    `IMAGE INPUT ORDER: IMAGE 1 is the reference room environment. IMAGE 2 is the EXACT reference sofa product image that MUST be replicated 100%.`,
     buildProductIdentityPrompt(analysis),
 
     `CRITICAL ROOM ARCHITECTURE, WALLS, WINDOWS & FURNITURE FAITHFULNESS (房间墙面、窗户与家具严禁随意篡改与幻觉):`,

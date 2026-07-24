@@ -112,54 +112,36 @@ async function handleGemini(req, res) {
   }
 
   const model = mapModel(body.model, body.mode);
-  const parts = [{ text: body.systemPrompt || "" }];
+
+  // Interleaved labels + images first, prompt at end (same approach as generate mode)
+  const parts = [];
 
   if (body.roomImage?.base64) {
-    parts.push({
-      inlineData: {
-        mimeType: body.roomImage.mimeType || "image/jpeg",
-        data: body.roomImage.base64
-      }
-    });
+    parts.push({ text: "IMAGE 1 [REFERENCE ROOM ENVIRONMENT]:" });
+    parts.push({ inlineData: { mimeType: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 } });
   }
 
   for (const image of body.roomReferenceImages || []) {
-    if (image.base64) {
-      parts.push({
-        inlineData: {
-          mimeType: image.mimeType || "image/jpeg",
-          data: image.base64
-        }
-      });
-    }
+    if (image.base64) parts.push({ inlineData: { mimeType: image.mimeType || "image/jpeg", data: image.base64 } });
   }
 
   if (body.sofaImage?.base64) {
-    parts.push({
-      inlineData: {
-        mimeType: body.sofaImage.mimeType || "image/jpeg",
-        data: body.sofaImage.base64
-      }
-    });
+    parts.push({ text: "IMAGE 2 [REFERENCE SOFA PRODUCT]:" });
+    parts.push({ inlineData: { mimeType: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 } });
   }
 
   if (body.productReferenceImage?.base64) {
-    parts.push({
-      inlineData: {
-        mimeType: body.productReferenceImage.mimeType || "image/jpeg",
-        data: body.productReferenceImage.base64
-      }
-    });
+    parts.push({ text: "IMAGE 3 [PRODUCT IDENTITY REFERENCE]:" });
+    parts.push({ inlineData: { mimeType: body.productReferenceImage.mimeType || "image/jpeg", data: body.productReferenceImage.base64 } });
   }
 
   if (body.resultImage?.base64) {
-    parts.push({
-      inlineData: {
-        mimeType: body.resultImage.mimeType || "image/jpeg",
-        data: body.resultImage.base64
-      }
-    });
+    parts.push({ text: "IMAGE 4 [GENERATED RESULT TO EVALUATE]:" });
+    parts.push({ inlineData: { mimeType: body.resultImage.mimeType || "image/jpeg", data: body.resultImage.base64 } });
   }
+
+  // Prompt at the end
+  parts.push({ text: body.systemPrompt || "" });
 
   if (body.mode === "generate") {
     const images = await generateImagesWithInteractions(body, apiKey, model);
@@ -226,20 +208,21 @@ async function generateImagesWithInteractions(body, apiKey, model) {
 }
 
 async function requestImageWithFallback(body, apiKey, model, perspective) {
+  // Following the floor lamp project: generateContent is PRIMARY path.
   let primary;
   try {
-    const response = await requestImageInteraction(body, apiKey, model, perspective);
+    const response = await requestImageGenerateContent(body, apiKey, model, perspective);
     primary = { response, raw: await response.text() };
     if (primary.response.ok) {
-      return { ...primary, model, api: "interactions" };
+      return { ...primary, model, api: "generateContent" };
     }
-    if (shouldTryGenerateContent(primary.response.status, primary.raw)) {
-      const fallbackResponse = await requestImageGenerateContent(body, apiKey, model, perspective);
+    if (shouldTryInteractions(primary.response.status, primary.raw)) {
+      const fallbackResponse = await requestImageInteraction(body, apiKey, model, perspective);
       const fallbackRaw = await fallbackResponse.text();
-      if (fallbackResponse.ok) return { response: fallbackResponse, raw: fallbackRaw, model, api: "generateContent" };
+      if (fallbackResponse.ok) return { response: fallbackResponse, raw: fallbackRaw, model, api: "interactions" };
     }
     if (!isHighDemand(primary.response.status, primary.raw) || !model.includes("pro-image")) {
-      return { ...primary, model, api: "interactions" };
+      return { ...primary, model, api: "generateContent" };
     }
   } catch (error) {
     if (!model.includes("pro-image") || !isRequestTimeout(error)) throw error;
@@ -247,20 +230,20 @@ async function requestImageWithFallback(body, apiKey, model, perspective) {
 
   const fallbackModel = process.env.GEMINI_IMAGE_MODEL_FALLBACK || process.env.GEMINI_IMAGE_MODEL || "gemini-2.5-flash-image";
   if (fallbackModel === model) {
-    if (primary) return { ...primary, model, api: "interactions" };
+    if (primary) return { ...primary, model, api: "generateContent" };
     throw new ImageGenerationUnavailable();
   }
 
   try {
-    const response = await requestImageInteraction(body, apiKey, fallbackModel, perspective);
+    const response = await requestImageGenerateContent(body, apiKey, fallbackModel, perspective);
     const raw = await response.text();
-    if (!response.ok && shouldTryGenerateContent(response.status, raw)) {
-      const fallbackResponse = await requestImageGenerateContent(body, apiKey, fallbackModel, perspective);
+    if (!response.ok && shouldTryInteractions(response.status, raw)) {
+      const fallbackResponse = await requestImageInteraction(body, apiKey, fallbackModel, perspective);
       const fallbackRaw = await fallbackResponse.text();
-      if (fallbackResponse.ok) return { response: fallbackResponse, raw: fallbackRaw, model: fallbackModel, api: "generateContent" };
+      if (fallbackResponse.ok) return { response: fallbackResponse, raw: fallbackRaw, model: fallbackModel, api: "interactions" };
     }
     if (!response.ok && isHighDemand(response.status, raw)) throw new ImageGenerationUnavailable();
-    return { response, raw, model: fallbackModel, api: "interactions" };
+    return { response, raw, model: fallbackModel, api: "generateContent" };
   } catch (error) {
     if (error instanceof ImageGenerationUnavailable) throw error;
     if (isRequestTimeout(error)) throw new ImageGenerationUnavailable();
@@ -268,13 +251,15 @@ async function requestImageWithFallback(body, apiKey, model, perspective) {
   }
 }
 
-function shouldTryGenerateContent(status, raw) {
+function shouldTryInteractions(status, raw) {
   return status === 400 && /not available in your current location|available-regions|not supported|unsupported|not found/i.test(raw);
 }
 
 function requestImageGenerateContent(body, apiKey, model, perspective) {
   const prompt = body.systemPrompt || "";
-  const parts = [{ text: prompt }];
+  const parts = [];
+
+  // Following the floor lamp project: images + labels FIRST, prompt LAST.
   if (body.roomImage?.base64) {
     parts.push({ text: "IMAGE 1 [REFERENCE ROOM ENVIRONMENT]:" });
     parts.push({ inlineData: { mimeType: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 } });
@@ -290,6 +275,9 @@ function requestImageGenerateContent(body, apiKey, model, perspective) {
     parts.push({ text: "IMAGE 3 [PRODUCT IDENTITY REFERENCE]:" });
     parts.push({ inlineData: { mimeType: body.productReferenceImage.mimeType || "image/jpeg", data: body.productReferenceImage.base64 } });
   }
+
+  // Prompt comes at the END
+  parts.push({ text: prompt });
   return fetchWithDiagnostics(`generateContent:${model}:${perspective}`, `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${apiKey}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -342,7 +330,14 @@ function requestImageInteraction(body, apiKey, model, perspective) {
 
 function buildInterleavedInput(prompt, body) {
   const parts = [];
-  parts.push({ type: "text", text: prompt });
+
+  // CRITICAL: Images + labels come FIRST, prompt comes LAST.
+  // Following the floor lamp project's approach exactly.
+  // Gemini processes multimodal input sequentially — seeing images first
+  // establishes visual context, then the detailed prompt at the end tells
+  // it how to process them. This prevents perspective instructions from
+  // being diluted or ignored.
+
   if (body.roomImage?.base64) {
     parts.push({ type: "text", text: "IMAGE 1 [REFERENCE ROOM ENVIRONMENT]:" });
     parts.push({ type: "image", mime_type: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 });
@@ -358,6 +353,10 @@ function buildInterleavedInput(prompt, body) {
     parts.push({ type: "text", text: "IMAGE 3 [PRODUCT IDENTITY REFERENCE]:" });
     parts.push({ type: "image", mime_type: body.productReferenceImage.mimeType || "image/jpeg", data: body.productReferenceImage.base64 });
   }
+
+  // Prompt comes at the END
+  parts.push({ type: "text", text: prompt });
+
   return parts;
 }
 
