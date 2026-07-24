@@ -10,8 +10,8 @@ import type {
   UploadedImage
 } from "../types";
 import { perspectiveLabels } from "../constants";
-import { buildAnalysisPrompt, buildCameraVariationPrompt, buildGenerationPrompt, buildQualityPrompt, buildVirtualRoomPrompt } from "./prompt";
-import { assertDistinctCameraViews, compressDataUrlToImage, removeGreenScreen } from "./image";
+import { buildAnalysisPrompt, buildGenerationPrompt, buildQualityPrompt, buildVirtualRoomPrompt } from "./prompt";
+import { compressDataUrlToImage } from "./image";
 import { resolvePlacementPlan } from "./placement";
 
 export async function analyzeScene(
@@ -121,57 +121,11 @@ function readableList(value: unknown, fallback: string[]): string[] {
   return result.length ? result : fallback;
 }
 
-async function performGeneration(
-  roomImage: UploadedImage,
-  sofaImage: UploadedImage,
-  productReferenceImage: UploadedImage,
-  roomReferenceImages: UploadedImage[],
-  analysis: SceneAnalysis,
-  settings: PlacementSettings,
-  extraContext: string,
-  extraPrompt: string[],
-  additionalSystemPrompt: string = ""
-): Promise<{ images: GeminiImageResponse["images"]; masterImageUrl: string; imageByPerspective: Map<string, string> }> {
-  const requestedPerspectives = (["wide", "medium", "close"] as const).filter((perspective) => settings.perspectives.includes(perspective));
-  const masterSettings: PlacementSettings = { ...settings, perspectives: requestedPerspectives };
-  const basePrompts = Object.fromEntries([
-    ["wide", buildGenerationPrompt(analysis, masterSettings, "wide", extraContext, extraPrompt)],
-    ...requestedPerspectives.filter((perspective) => perspective !== "wide").map((perspective) => [
-      perspective,
-      buildCameraVariationPrompt(analysis, masterSettings, perspective, extraContext, extraPrompt)
-    ])
-  ]);
-
-  const response = await postGemini<GeminiImageResponse>({
-    mode: "generate",
-    model: settings.model,
-    roomImage,
-    roomReferenceImages,
-    sofaImage,
-    productReferenceImage,
-    analysis,
-    settings: masterSettings,
-    systemPrompt: `${additionalSystemPrompt}请生成一张用于派生多个镜头的远景主图。`,
-    perspectivePrompts: additionalSystemPrompt
-      ? Object.fromEntries(Object.entries(basePrompts).map(([key, prompt]) => [key, `${additionalSystemPrompt}\n\n${prompt}`]))
-      : basePrompts
-  });
-
-  const masterImageUrl = response.images.find((image) => image.perspective === "wide")?.imageUrl;
-  if (!masterImageUrl) throw new Error("未获得远景主图，无法校验镜头结果");
-  const imageByPerspective = new Map(response.images.map((image) => [image.perspective, image.imageUrl]));
-
-  await assertDistinctCameraViews(
-    masterImageUrl,
-    requestedPerspectives.filter((perspective) => perspective !== "wide").flatMap((perspective) => {
-      const imageUrl = imageByPerspective.get(perspective);
-      return imageUrl ? [imageUrl] : [];
-    })
-  );
-
-  return { images: response.images, masterImageUrl, imageByPerspective };
-}
-
+/**
+ * Generate placement images — each perspective is independently generated.
+ * Following the floor lamp project's approach: send room + product images directly to Gemini,
+ * rely on detailed prompts for product preservation. No compositing step.
+ */
 export async function generatePlacementImages(
   roomImage: UploadedImage,
   sofaImage: UploadedImage,
@@ -182,137 +136,96 @@ export async function generatePlacementImages(
   extraContext: string,
   extraPrompt: string[]
 ): Promise<GeminiImageResponse["images"]> {
-  const requestedPerspectives = (["wide", "medium", "close"] as const).filter((perspective) => settings.perspectives.includes(perspective));
+  const requestedPerspectives = (["wide", "medium", "close"] as const).filter((p) => settings.perspectives.includes(p));
 
-  let result: { images: GeminiImageResponse["images"]; masterImageUrl: string; imageByPerspective: Map<string, string> };
-  let retryCount = 0;
-  const maxRetries = 2;
-  let additionalPrompt = "";
+  // Generate each perspective independently — no master+variation dependency
+  const images = await Promise.all(
+    requestedPerspectives.map(async (perspective) => {
+      const prompt = buildGenerationPrompt(analysis, settings, perspective, extraContext, extraPrompt);
 
-  while (retryCount <= maxRetries) {
-    try {
-      result = await performGeneration(
+      const response = await postGemini<GeminiImageResponse>({
+        mode: "generate",
+        model: settings.model,
         roomImage,
+        roomReferenceImages,
         sofaImage,
         productReferenceImage,
-        roomReferenceImages,
-        analysis,
-        settings,
-        extraContext,
-        extraPrompt,
-        additionalPrompt
-      );
+        settings: { ...settings, perspectives: [perspective] },
+        systemPrompt: prompt
+      });
 
-      const qualityResults = await Promise.all(
-        requestedPerspectives.map((perspective) => {
-          const imageUrl = result.imageByPerspective.get(perspective);
-          if (!imageUrl) return { passed: false };
-          return checkGeneratedPlacement(
-            roomImage,
-            productReferenceImage,
-            [],
-            imageUrl,
-            analysis,
-            settings,
-            extraContext,
-            extraPrompt
-          );
-        })
-      );
+      // Find the image matching our requested perspective
+      const image = response.images.find((img) => img.perspective === perspective)
+        || response.images[0]; // fallback to first image if perspective label mismatch
 
-      const failedPerspectives = requestedPerspectives.filter((_, index) => !qualityResults[index].passed);
-      if (failedPerspectives.length === 0) {
-        break;
-      }
+      return {
+        perspective,
+        title: perspectiveLabels[perspective],
+        imageUrl: image?.imageUrl || ""
+      };
+    })
+  );
 
-      if (retryCount >= maxRetries) {
-        const issues = failedPerspectives.flatMap((perspective, index) =>
-          qualityResults[index].issues ? [`${perspective}: ${qualityResults[index].issues.join("；")}`] : []
-        );
-        throw new Error(`生成质量检查未通过：${issues.join("；")}`);
-      }
-
-      const correctionPrompts = failedPerspectives.flatMap((perspective, index) =>
-        qualityResults[index].correctionPrompt ? [qualityResults[index].correctionPrompt] : []
-      );
-      additionalPrompt = `【上一轮生成质量检查失败，必须修正以下问题】\n${correctionPrompts.join("\n")}\n\n请严格按照产品参考图重新生成，确保沙发款式、颜色、材质、细节完全一致。`;
-      retryCount++;
-    } catch (error) {
-      if (retryCount >= maxRetries) {
-        throw error instanceof Error ? error : new Error("生成失败");
-      }
-
-      if (error instanceof Error && error.message.includes("镜头变化不足")) {
-        additionalPrompt = "上一轮结果因模型偷懒被系统拒绝：中近景/近景只是远景的裁切、缩放或局部放大，没有真实改变相机机位。请重新生成真实不同机位；禁止返回任何裁切、缩放、局部放大或几乎相同构图。";
-      } else {
-        additionalPrompt = "上一轮生成结果不符合要求，请重新生成。";
-      }
-      retryCount++;
-    }
+  // Filter out any failed perspectives
+  const validImages = images.filter((img) => Boolean(img.imageUrl));
+  if (validImages.length !== requestedPerspectives.length) {
+    throw new Error(`视角结果不完整：已选择 ${requestedPerspectives.length} 个视角，但仅生成 ${validImages.length} 张图片。请重新生成。`);
   }
 
-  return requestedPerspectives
-    .map((perspective) => ({ perspective, title: perspectiveLabels[perspective], imageUrl: result.imageByPerspective.get(perspective) }))
-    .filter((image): image is { perspective: PlacementSettings["perspectives"][number]; title: string; imageUrl: string } => Boolean(image.imageUrl));
+  return validImages;
 }
 
+/**
+ * Generate virtual room images — each perspective independently generated.
+ * Following the floor lamp project's approach with STYLE_SPECS.
+ */
 export async function generateVirtualRoomImages(
   sofaImage: UploadedImage,
+  productReferenceImage: UploadedImage,
   analysis: SceneAnalysis,
   settings: PlacementSettings,
   extraContext: string,
   extraPrompt: string[]
 ): Promise<GeminiImageResponse["images"]> {
-  const requestedPerspectives = (["wide", "medium", "close"] as const).filter((perspective) => settings.perspectives.includes(perspective));
-  const masterSettings: PlacementSettings = { ...settings, perspectives: requestedPerspectives };
-  const perspectivePrompts = Object.fromEntries(requestedPerspectives.map((perspective) => [
-    perspective,
-    buildVirtualRoomPrompt(analysis, masterSettings, perspective, extraContext, extraPrompt)
-  ]));
+  const requestedPerspectives = (["wide", "medium", "close"] as const).filter((p) => settings.perspectives.includes(p));
 
-  const response = await postGemini<GeminiImageResponse>({
-    mode: "generate",
-    model: settings.model,
-    sofaImage,
-    analysis,
-    settings: masterSettings,
-    systemPrompt: "请根据目标沙发参考图生成同一虚拟客厅的多视角试摆效果，不要请求房间原图。",
-    perspectivePrompts
-  });
+  // Generate each perspective independently
+  const images = await Promise.all(
+    requestedPerspectives.map(async (perspective) => {
+      const prompt = buildVirtualRoomPrompt(analysis, settings, perspective, extraContext, extraPrompt);
 
-  const imageByPerspective = new Map(response.images.map((image) => [image.perspective, image.imageUrl]));
-  return requestedPerspectives
-    .map((perspective) => ({ perspective, title: perspectiveLabels[perspective], imageUrl: imageByPerspective.get(perspective) }))
-    .filter((image): image is { perspective: PlacementSettings["perspectives"][number]; title: string; imageUrl: string } => Boolean(image.imageUrl));
+      const response = await postGemini<GeminiImageResponse>({
+        mode: "generate",
+        model: settings.model,
+        sofaImage,
+        productReferenceImage,
+        settings: { ...settings, perspectives: [perspective] },
+        systemPrompt: prompt
+      });
+
+      const image = response.images.find((img) => img.perspective === perspective)
+        || response.images[0];
+
+      return {
+        perspective,
+        title: perspectiveLabels[perspective],
+        imageUrl: image?.imageUrl || ""
+      };
+    })
+  );
+
+  const validImages = images.filter((img) => Boolean(img.imageUrl));
+  if (validImages.length !== requestedPerspectives.length) {
+    throw new Error(`视角结果不完整：已选择 ${requestedPerspectives.length} 个视角，但仅生成 ${validImages.length} 张图片。请重新生成。`);
+  }
+
+  return validImages;
 }
 
-export async function extractSofaForeground(sofaImage: UploadedImage, settings: PlacementSettings): Promise<UploadedImage> {
-  const response = await postGemini<GeminiImageResponse>({
-    mode: "cutout", model: settings.model, sofaImage,
-    settings: { ...settings, perspectives: ["wide"] },
-    systemPrompt: "这是沙发抠图任务，不是室内设计或试摆任务。只提取输入照片中的同一张完整沙发产品，绝对保留其模块数量、轮廓、扶手、靠背、坐垫、缝线、材质、颜色、脚和可见配件。删除人物、地面、墙面、地毯、茶几、文字和全部背景。输出画面只能有一张完整沙发，置于纯 RGB(0,255,0) 绿色背景；绿色区域必须完全均匀、无阴影、无渐变、无其他物体。",
-    perspectivePrompts: { wide: "输出用于后续合成的单张沙发前景，不要改变产品设计。" }
-  });
-  const imageUrl = response.images.find((image) => image.perspective === "wide")?.imageUrl;
-  if (!imageUrl) throw new Error("Gemini 未返回沙发前景图");
-  const dataUrl = await removeGreenScreen(imageUrl);
-  return compressDataUrlToImage(dataUrl, `${sofaImage.fileName.replace(/\.[^.]+$/, "")}-foreground.jpg`, 820, 0.64, 300 * 1024);
-}
-
-export async function eraseExistingSofas(roomImage: UploadedImage, settings: PlacementSettings): Promise<UploadedImage> {
-  const response = await postGemini<GeminiImageResponse>({
-    mode: "erase",
-    model: settings.model,
-    roomImage,
-    settings: { ...settings, perspectives: ["wide"] },
-    systemPrompt: "这是室内场景清场任务，不是重新设计房间。识别并移除输入房间照片中所有沙发、躺椅和沙发模块。用周围真实的地面、墙面、窗帘、地毯、背景和光影自然补全被遮挡区域，形成可用于家具试摆的干净空场景。必须保留所有非沙发的建筑结构、门窗、楼梯、栏杆、吊灯、地面、墙面、茶几、地毯、灯具、植物和其他家具；不得改变房间布局、视角、机位、材质、颜色、光线和任何非沙发物体。输出同一机位的单张干净房间图，画面中不得出现沙发或躺椅。",
-    perspectivePrompts: { wide: "只输出已移除原有沙发的干净房间场景，不添加任何新家具。" }
-  });
-  const imageUrl = response.images.find((image) => image.perspective === "wide")?.imageUrl;
-  if (!imageUrl) throw new Error("Gemini 未返回干净房间场景图");
-  return compressDataUrlToImage(imageUrl, `${roomImage.fileName.replace(/\.[^.]+$/, "")}-clear.jpg`, 960, 0.66, 420 * 1024);
-}
-
+/**
+ * Quality check for generated placement.
+ * Checks product consistency and overall quality.
+ */
 export async function checkGeneratedPlacement(
   roomImage: UploadedImage,
   sofaImage: UploadedImage,

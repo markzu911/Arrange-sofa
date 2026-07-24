@@ -11,3 +11,6 @@ trial-server.log
 trial-server.err.log
 *.tsbuildinfo
 gemini-debug.json
+.workbuddy/
+trial-current.log
+trial-current.err.log

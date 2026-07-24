@@ -17,8 +17,8 @@ import {
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { defaultSettings, perspectiveLabels, TOOL_COST, TOOL_NAME, virtualRoomStyleLabels } from "./constants";
 import styles from "./VillaSofaPlacementTool.module.css";
-import { analyzeScene, checkGeneratedPlacement, eraseExistingSofas, generatePlacementBackgrounds, generateVirtualRoomBackgrounds } from "./services/gemini";
-import { composeLockedProduct, compressDataUrlToBlob, compressImage, createWhiteBackgroundProductLayer, GEMINI_IMAGE_TARGET_BYTES } from "./services/image";
+import { analyzeScene, checkGeneratedPlacement, generatePlacementImages, generateVirtualRoomImages } from "./services/gemini";
+import { compressDataUrlToBlob, compressImage, GEMINI_IMAGE_TARGET_BYTES } from "./services/image";
 import {
   consumeIntegral,
   createInitialPlatformContext,
@@ -143,8 +143,6 @@ export function VillaSofaPlacementTool() {
   const [roomImage, setRoomImage] = useState<UploadedImage | null>(null);
   const [useVirtualRoom, setUseVirtualRoom] = useState(false);
   const [sofaImage, setSofaImage] = useState<UploadedImage | null>(null);
-  const [sofaForegroundImage, setSofaForegroundImage] = useState<UploadedImage | null>(null);
-  const [clearedRoomImage, setClearedRoomImage] = useState<UploadedImage | null>(null);
   const [settings, setSettings] = useState<PlacementSettings>(defaultSettings);
   const [analysis, setAnalysis] = useState<SceneAnalysis | null>(null);
   const [results, setResults] = useState<GeneratedImageResult[]>([]);
@@ -292,8 +290,6 @@ export function VillaSofaPlacementTool() {
     setAgentFlowStarted(true);
     setRoomImage(null);
     setSofaImage(null);
-    setSofaForegroundImage(null);
-    setClearedRoomImage(null);
     setAnalysis(null);
     setResults([]);
     setReviewSubstep("plan");
@@ -319,8 +315,6 @@ export function VillaSofaPlacementTool() {
         setAgentFlowStarted(true);
         setRoomImage(image);
         setSofaImage(null);
-        setSofaForegroundImage(null);
-      setClearedRoomImage(null);
       setAnalysis(null);
       setReviewSubstep("plan");
       setGuidedStep("room");
@@ -329,8 +323,6 @@ export function VillaSofaPlacementTool() {
         await autoAnalyzeRoom(image);
       } else {
         setSofaImage(image);
-        setSofaForegroundImage(null);
-        setClearedRoomImage(null);
         addChatMessage({ role: "user", text: "已上传沙发照片", image });
         addChatMessage({ role: "assistant", text: "沙发照片已收到，我正在识别款式、材质、颜色和比例。" });
         await autoAnalyzeSofa(image);
@@ -374,12 +366,10 @@ export function VillaSofaPlacementTool() {
       try {
         const nextAnalysis = createVirtualRoomAnalysis(styleLabel);
         setAnalysis(nextAnalysis);
-        setSofaForegroundImage(await createWhiteBackgroundProductLayer(nextSofaImage));
-        setClearedRoomImage(null);
         setReviewSubstep("plan");
         setGuidedStep("review");
         setStatus("虚拟房间方案已准备好，请确认风格、视角和比例");
-        addChatMessage({ role: "assistant", text: `已准备 ${styleLabel} 虚拟房间方案。该模式不消耗积分，确认视角和比例后即可生成。` });
+        addChatMessage({ role: "assistant", text: `已准备 ${styleLabel} 虚拟房间方案。确认视角和比例后即可生成，生成时会直接把沙发融入虚拟客厅。` });
       } catch (err) {
         setError(userFacingError(err, "虚拟房间方案准备失败"));
         setStatus("");
@@ -402,29 +392,21 @@ export function VillaSofaPlacementTool() {
       }
       const nextAnalysis = await analyzeScene(roomImage, nextSofaImage, [], settings.model, platform.context, platform.prompt, settings.notes);
       setAnalysis(nextAnalysis);
-      setStatus("正在锁定原始沙发产品图...");
-      const foreground = await createWhiteBackgroundProductLayer(nextSofaImage);
-      setSofaForegroundImage(foreground);
-      setStatus("正在移除原场景中的沙发，生成干净试摆底图...");
-      const clearedRoom = await eraseExistingSofas(roomImage, settings);
-      setClearedRoomImage(clearedRoom);
       setReviewSubstep("plan");
       setGuidedStep("review");
-      setStatus("原始沙发产品图和干净场景已锁定，请确认试摆方案");
-      addChatMessage({ role: "assistant", text: `已锁定您上传的原始沙发产品像素，并完成原场景清场。后续试摆不会让模型重绘沙发，只会生成不同视角的无沙发环境后再合成。我的建议是：${nextAnalysis.placementAdvice}。请在下方确认方案，或直接告诉我您想调整的位置和视角。` });
+      setStatus("沙发和房间已解析完成，请确认试摆方案");
+      addChatMessage({ role: "assistant", text: `沙发和房间解析完成。生成时会直接将目标沙发自然融入房间环境，保留沙发款式、材质和细节。我的建议是：${nextAnalysis.placementAdvice}。请在下方确认方案，或直接告诉我您想调整的位置和视角。` });
     } catch (err) {
       setError(userFacingError(err, "沙发解析失败"));
-      setSofaForegroundImage(null);
-      setClearedRoomImage(null);
-      setStatus("产品图锁定或场景清场失败，请重新上传或重试；系统不会继续生成错误产品");
-      addChatMessage({ role: "assistant", text: "原始产品图锁定或原场景清场没有完成。为避免生成出错误沙发或不同房间，系统已停止后续试摆，请重新上传白底清晰的产品图后重试。" });
+      setStatus("沙发解析失败，请重新上传或重试");
+      addChatMessage({ role: "assistant", text: "沙发解析没有完成，请重新上传清晰的沙发照片后重试。" });
     } finally {
       setIsAnalyzingSofa(false);
     }
   }
 
   async function handleGenerate(correctionPrompt = "") {
-    if (!sofaImage || !analysis || (!useVirtualRoom && (!roomImage || !sofaForegroundImage || !clearedRoomImage))) {
+    if (!sofaImage || !analysis || (!useVirtualRoom && !roomImage)) {
       setError("请先完成房间和沙发上传");
       return;
     }
@@ -433,30 +415,28 @@ export function VillaSofaPlacementTool() {
     setIsGenerating(true);
     setGuidedStep("generating");
     setStatus("正在生成试摆效果图...");
-    addChatMessage({ role: "assistant", text: useVirtualRoom ? "方案已确认，正在生成虚拟房间效果图。我会保留沙发产品特征，并匹配装修风格、光照和空间尺度。" : "方案已确认，正在生成试摆效果图。我会匹配沙发尺度、房间透视、光照和地面阴影。" });
+    addChatMessage({ role: "assistant", text: useVirtualRoom ? "方案已确认，正在生成虚拟房间效果图。我会保留沙发产品特征，并匹配装修风格、光照和空间尺度。" : "方案已确认，正在生成试摆效果图。我会保留沙发款式、材质和细节，并匹配房间透视、光照和地面阴影。" });
     try {
-      if (settings.addHumanModel) {
-        throw new Error("产品锁定模式暂不支持人体模特。人体遮挡会要求模型重绘沙发，无法保证产品一致性。");
-      }
       if (!useVirtualRoom && !isStandaloneTrial) {
         await verifyIntegral(platform);
       }
       const generationSettings = correctionPrompt
         ? { ...settings, notes: `${settings.notes}\n质检纠正要求：${correctionPrompt}`.trim() }
         : settings;
-      const backgrounds = useVirtualRoom
-        ? await generateVirtualRoomBackgrounds(analysis, generationSettings, platform.context, platform.prompt)
-        : await generatePlacementBackgrounds(clearedRoomImage as UploadedImage, analysis, generationSettings, platform.context, platform.prompt);
-      const images = await Promise.all(backgrounds.map(async (background) => ({
-        ...background,
-        imageUrl: await composeLockedProduct(background.imageUrl, sofaForegroundImage as UploadedImage, background.perspective)
-      })));
+
+      // Following the floor lamp project's approach: generate complete scenes directly.
+      // Each perspective is independently generated by Gemini. No compositing step.
+      const productReferenceImage = sofaImage; // Sofa product reference = the uploaded sofa image
+      const images = useVirtualRoom
+        ? await generateVirtualRoomImages(sofaImage, productReferenceImage, analysis, generationSettings, platform.context, platform.prompt)
+        : await generatePlacementImages(roomImage as UploadedImage, sofaImage, productReferenceImage, [], analysis, generationSettings, platform.context, platform.prompt);
+
       if (images.length !== generationSettings.perspectives.length) {
         throw new Error(`视角结果不完整：已选择 ${generationSettings.perspectives.length} 个视角，但仅生成 ${images.length} 张图片。请重新生成。`);
       }
       const qualities = !useVirtualRoom && roomImage
         ? await Promise.all(images.map((item) => checkGeneratedPlacement(
-          roomImage,
+          roomImage as UploadedImage,
           sofaImage,
           [],
           item.imageUrl,
@@ -590,8 +570,6 @@ export function VillaSofaPlacementTool() {
     setUseVirtualRoom(false);
     setRoomImage(null);
     setSofaImage(null);
-    setSofaForegroundImage(null);
-    setClearedRoomImage(null);
     setAnalysis(null);
     setResults([]);
     setAgentFlowStarted(false);
@@ -641,7 +619,7 @@ export function VillaSofaPlacementTool() {
       {guidedStep === "review" && analysis && (
         <ReviewStep
           analysis={analysis}
-          sofaForegroundImage={sofaForegroundImage}
+          sofaImage={sofaImage}
           settings={settings}
           useVirtualRoom={useVirtualRoom}
           substep={reviewSubstep}
@@ -969,7 +947,7 @@ function PreviewCard({ title, image, loading }: { title: string; image: Uploaded
 
 function ReviewStep({
   analysis,
-  sofaForegroundImage,
+  sofaImage,
   settings,
   useVirtualRoom,
   substep,
@@ -987,7 +965,7 @@ function ReviewStep({
   isRefreshingPlan
 }: {
   analysis: SceneAnalysis;
-  sofaForegroundImage: UploadedImage | null;
+  sofaImage: UploadedImage | null;
   settings: PlacementSettings;
   useVirtualRoom: boolean;
   substep: "plan" | "settings";
@@ -1046,7 +1024,7 @@ function ReviewStep({
                     {isRefreshingPlan ? <Loader2 className={styles.spin} size={16} /> : <RefreshCcw size={16} />}
                     按当前要求重新规划
                   </button>
-                  {sofaForegroundImage && <span>原始产品图已锁定</span>}
+                  {sofaImage && <span>沙发产品参考已就绪</span>}
                 </div>
                 <div className={styles.planGrid}>
                   <PlanField label="摆放位置" value={analysis.placementPlan.placement} onChange={(value) => onPlanChange("placement", value)} />
