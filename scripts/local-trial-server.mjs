@@ -213,29 +213,26 @@ async function handleGemini(req, res) {
 
 async function generateImagesWithInteractions(body, apiKey, model) {
   const requested = body.settings?.perspectives?.length ? body.settings.perspectives : ["medium"];
-  const { response, raw, model: selectedModel, api: selectedApi } = await requestImageWithFallback(body, apiKey, model, "wide");
+  const { response, raw, model: selectedModel } = await requestImageWithFallback(body, apiKey, model, "wide");
   if (!response.ok) throw toGeminiUpstreamError(response.status, raw, "Gemini 图片生成失败");
 
   const masterData = JSON.parse(raw);
   const masterImage = extractInteractionImage(masterData) || extractGeneratedContentImage(masterData);
-  const interactionId = selectedApi === "interactions" && typeof masterData?.id === "string" ? masterData.id : "";
   if (!masterImage) throw new Error("Gemini 未返回可用的试摆主图");
   const results = [{ perspective: "wide", title: "远景（房间全景）", imageUrl: `data:${masterImage.mimeType};base64,${masterImage.data}` }];
   await Promise.all(requested.filter((item) => item !== "wide").map(async (perspective) => {
     const variationBody = {
       ...body,
       roomImage: { base64: masterImage.data, mimeType: masterImage.mimeType },
-      roomReferenceImages: []
+      roomReferenceImages: [],
+      isCameraVariation: true
     };
-    const variationResponse = interactionId
-      ? await requestImageInteraction(variationBody, apiKey, selectedModel, perspective, interactionId)
-      : await requestImageGenerateContent(variationBody, apiKey, selectedModel, perspective);
-    const variationRaw = await variationResponse.text();
+    const { response: variationResponse, raw: variationRaw } = await requestImageWithFallback(variationBody, apiKey, selectedModel, perspective);
     if (!variationResponse.ok) throw toGeminiUpstreamError(variationResponse.status, variationRaw, "镜头生成失败，请稍后重试");
     const variationData = JSON.parse(variationRaw);
     const variationImage = extractInteractionImage(variationData) || extractGeneratedContentImage(variationData);
     if (!variationImage) throw new Error("Gemini 未返回有效镜头图片");
-    results.push({ perspective, title: perspective === "medium" ? "中近景" : "近景（主要展示沙发）", imageUrl: `data:${variationImage.mimeType};base64,${variationImage.data}` });
+    results.push({ perspective, title: perspective === "medium" ? "中近景（沙发主体）" : "近景（产品细节）", imageUrl: `data:${variationImage.mimeType};base64,${variationImage.data}` });
   }));
   results.sort((left, right) => requested.indexOf(left.perspective) - requested.indexOf(right.perspective));
   return results;
@@ -291,17 +288,11 @@ function shouldTryGenerateContent(status, raw) {
 function requestImageGenerateContent(body, apiKey, model, perspective) {
   const prompt = body.perspectivePrompts?.[perspective] || body.systemPrompt || "";
   const parts = [{ text: prompt }];
-  if (body.roomImage?.base64) {
-    parts.push({ inlineData: { mimeType: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 } });
-  }
-  for (const image of body.roomReferenceImages || []) {
-    if (image.base64) parts.push({ inlineData: { mimeType: image.mimeType || "image/jpeg", data: image.base64 } });
-  }
-  if (body.sofaImage?.base64) {
-    parts.push({ inlineData: { mimeType: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 } });
-  }
-  if (body.productReferenceImage?.base64) {
-    parts.push({ inlineData: { mimeType: body.productReferenceImage.mimeType || "image/jpeg", data: body.productReferenceImage.base64 } });
+  const images = body.isCameraVariation
+    ? [body.productReferenceImage, body.sofaImage, body.roomImage]
+    : [body.roomImage, ...(body.roomReferenceImages || []), body.sofaImage, body.productReferenceImage];
+  for (const image of images) {
+    if (image?.base64) parts.push({ inlineData: { mimeType: image.mimeType || "image/jpeg", data: image.base64 } });
   }
   return fetchWithDiagnostics(`generateContent:${model}:${perspective}`, `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${apiKey}`, {
     method: "POST",
@@ -321,11 +312,16 @@ function requestImageGenerateContent(body, apiKey, model, perspective) {
   });
 }
 
-function requestImageInteraction(body, apiKey, model, perspective, previousInteractionId) {
+function requestImageInteraction(body, apiKey, model, perspective) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 75_000);
   const isAssetEdit = body.mode === "cutout" || body.mode === "erase";
   const prompt = body.perspectivePrompts?.[perspective] || body.systemPrompt || "";
+  const cameraVariationInstruction = body.backgroundOnly
+    ? "这是同一试摆方案的无沙发背景板换镜头任务。第一张图只用于参考同一房间的建筑结构、摆放区域、尺度、光影和家具关系。不得生成沙发、躺椅或人体模特；必须从不同真实机位重新生成指定背景镜头，不能裁切、缩放或复用已有构图。"
+    : body.productReferenceImage?.base64
+    ? "这是同一试摆方案的换镜头任务，不继承前一张生成图的产品样式。第一张是原始沙发产品参考图，是产品身份唯一依据；第二张是沙发前景；第三张远景图只用于参考房间、摆放、尺度、光影和家具关系。如果远景图中的沙发与第一张产品参考图不一致，必须按第一张产品参考图纠正。"
+    : "这是同一虚拟试摆方案的换镜头任务，不继承前一张生成图的产品样式。第一张是原始沙发产品参考图，是产品身份唯一依据；第二张远景图只用于参考房间、摆放、尺度、光影和家具关系。如果远景图中的沙发与第一张产品参考图不一致，必须按第一张产品参考图纠正。";
   const input = isAssetEdit
     ? [
         { type: "text", text: prompt },
@@ -335,28 +331,29 @@ function requestImageInteraction(body, apiKey, model, perspective, previousInter
               ? [{ type: "image", mime_type: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 }]
               : [])
       ]
-    : previousInteractionId
+    : body.isCameraVariation
       ? [
-          { type: "text", text: `${prompt}\n\n这是主图受限相机变换，不是新场景生成。只生成指定镜头：${perspective}。请直接输出最终效果图。` },
-          ...(body.roomImage?.base64 ? [{ type: "image", mime_type: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 }] : []),
+          { type: "text", text: `${prompt}\n\n${cameraVariationInstruction}只生成指定镜头：${perspective}。请直接输出最终效果图。` },
+          ...(body.productReferenceImage?.base64 ? [{ type: "image", mime_type: body.productReferenceImage.mimeType || "image/jpeg", data: body.productReferenceImage.base64 }] : []),
           ...(body.sofaImage?.base64 ? [{ type: "image", mime_type: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 }] : []),
-          ...(body.productReferenceImage?.base64 ? [{ type: "image", mime_type: body.productReferenceImage.mimeType || "image/jpeg", data: body.productReferenceImage.base64 }] : [])
+          ...(body.roomImage?.base64 ? [{ type: "image", mime_type: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 }] : [])
         ]
       : [
-          { type: "text", text: `${prompt}\n\n请先生成锁定布局的远景主图。` },
+          { type: "text", text: body.backgroundOnly
+            ? `${prompt}\n\n请先生成锁定布局的远景无沙发背景板。必须保留房间主体结构和大部分环境，画面中不得出现沙发、躺椅或人体模特。`
+            : `${prompt}\n\n请先生成锁定布局的远景主图。远景必须展示完整目标沙发和大部分环境；沙发产品身份必须以原始产品参考图为准。` },
           ...(body.roomImage?.base64 ? [{ type: "image", mime_type: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 }] : []),
           ...((body.roomReferenceImages || []).filter((image) => image.base64).map((image) => ({ type: "image", mime_type: image.mimeType || "image/jpeg", data: image.base64 }))),
           ...(body.sofaImage?.base64 ? [{ type: "image", mime_type: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 }] : []),
           ...(body.productReferenceImage?.base64 ? [{ type: "image", mime_type: body.productReferenceImage.mimeType || "image/jpeg", data: body.productReferenceImage.base64 }] : [])
         ];
-  return fetchWithDiagnostics(`interactions:${model}:${perspective}:${previousInteractionId ? "variation" : "master"}`, "https://generativelanguage.googleapis.com/v1beta/interactions", {
+  return fetchWithDiagnostics(`interactions:${model}:${perspective}:${body.isCameraVariation ? "variation" : "master"}`, "https://generativelanguage.googleapis.com/v1beta/interactions", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
     signal: controller.signal,
     body: JSON.stringify({
       model,
       input,
-      ...(previousInteractionId ? { previous_interaction_id: previousInteractionId } : {}),
       response_format: {
         type: "image",
         mime_type: "image/jpeg",

@@ -21,8 +21,8 @@ export const defaultSettings: PlacementSettings = {
 
 export const perspectiveLabels: Record<PerspectiveOption, string> = {
   wide: "远景（房间全景）",
-  medium: "中近景",
-  close: "近景（主要展示沙发）"
+  medium: "中近景（沙发主体）",
+  close: "近景（产品细节）"
 };
 
 export const virtualRoomStyleLabels: Record<VirtualRoomStyle, string> = {

@@ -141,6 +141,7 @@ export interface GeminiGenerateRequest {
   systemPrompt: string;
   perspectivePrompts?: Record<string, string>;
   resultImage?: Pick<UploadedImage, "base64" | "mimeType">;
+  backgroundOnly?: boolean;
 }
 
 export interface GeminiAnalyzeResponse {

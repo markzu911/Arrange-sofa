@@ -17,8 +17,8 @@ import {
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { defaultSettings, perspectiveLabels, TOOL_COST, TOOL_NAME, virtualRoomStyleLabels } from "./constants";
 import styles from "./VillaSofaPlacementTool.module.css";
-import { analyzeScene, checkGeneratedPlacement, eraseExistingSofas, extractSofaForeground, generatePlacementImages, generateVirtualRoomImages } from "./services/gemini";
-import { compressDataUrlToBlob, compressImage, GEMINI_IMAGE_TARGET_BYTES } from "./services/image";
+import { analyzeScene, checkGeneratedPlacement, eraseExistingSofas, generatePlacementBackgrounds, generateVirtualRoomBackgrounds } from "./services/gemini";
+import { composeLockedProduct, compressDataUrlToBlob, compressImage, createWhiteBackgroundProductLayer, GEMINI_IMAGE_TARGET_BYTES } from "./services/image";
 import {
   consumeIntegral,
   createInitialPlatformContext,
@@ -374,7 +374,7 @@ export function VillaSofaPlacementTool() {
       try {
         const nextAnalysis = createVirtualRoomAnalysis(styleLabel);
         setAnalysis(nextAnalysis);
-        setSofaForegroundImage(nextSofaImage);
+        setSofaForegroundImage(await createWhiteBackgroundProductLayer(nextSofaImage));
         setClearedRoomImage(null);
         setReviewSubstep("plan");
         setGuidedStep("review");
@@ -402,22 +402,22 @@ export function VillaSofaPlacementTool() {
       }
       const nextAnalysis = await analyzeScene(roomImage, nextSofaImage, [], settings.model, platform.context, platform.prompt, settings.notes);
       setAnalysis(nextAnalysis);
-      setStatus("正在提取并核验沙发前景...");
-      const foreground = await extractSofaForeground(nextSofaImage, settings);
+      setStatus("正在锁定原始沙发产品图...");
+      const foreground = await createWhiteBackgroundProductLayer(nextSofaImage);
       setSofaForegroundImage(foreground);
       setStatus("正在移除原场景中的沙发，生成干净试摆底图...");
       const clearedRoom = await eraseExistingSofas(roomImage, settings);
       setClearedRoomImage(clearedRoom);
       setReviewSubstep("plan");
       setGuidedStep("review");
-      setStatus("沙发前景和干净场景已锁定，请确认试摆方案");
-      addChatMessage({ role: "assistant", text: `已完成沙发前景提取和原场景清场，后续试摆将只在这张干净底图上合成。我的建议是：${nextAnalysis.placementAdvice}。请在下方确认方案，或直接告诉我您想调整的位置和视角。` });
+      setStatus("原始沙发产品图和干净场景已锁定，请确认试摆方案");
+      addChatMessage({ role: "assistant", text: `已锁定您上传的原始沙发产品像素，并完成原场景清场。后续试摆不会让模型重绘沙发，只会生成不同视角的无沙发环境后再合成。我的建议是：${nextAnalysis.placementAdvice}。请在下方确认方案，或直接告诉我您想调整的位置和视角。` });
     } catch (err) {
       setError(userFacingError(err, "沙发解析失败"));
       setSofaForegroundImage(null);
       setClearedRoomImage(null);
-      setStatus("沙发前景或场景清场失败，请重新上传或重试；系统不会使用原图继续试摆");
-      addChatMessage({ role: "assistant", text: "沙发前景提取或原场景清场没有完成。为避免生成出错误沙发或不同房间，系统已停止后续试摆，请重新上传清晰图片后重试。" });
+      setStatus("产品图锁定或场景清场失败，请重新上传或重试；系统不会继续生成错误产品");
+      addChatMessage({ role: "assistant", text: "原始产品图锁定或原场景清场没有完成。为避免生成出错误沙发或不同房间，系统已停止后续试摆，请重新上传白底清晰的产品图后重试。" });
     } finally {
       setIsAnalyzingSofa(false);
     }
@@ -435,24 +435,49 @@ export function VillaSofaPlacementTool() {
     setStatus("正在生成试摆效果图...");
     addChatMessage({ role: "assistant", text: useVirtualRoom ? "方案已确认，正在生成虚拟房间效果图。我会保留沙发产品特征，并匹配装修风格、光照和空间尺度。" : "方案已确认，正在生成试摆效果图。我会匹配沙发尺度、房间透视、光照和地面阴影。" });
     try {
+      if (settings.addHumanModel) {
+        throw new Error("产品锁定模式暂不支持人体模特。人体遮挡会要求模型重绘沙发，无法保证产品一致性。");
+      }
       if (!useVirtualRoom && !isStandaloneTrial) {
         await verifyIntegral(platform);
       }
       const generationSettings = correctionPrompt
         ? { ...settings, notes: `${settings.notes}\n质检纠正要求：${correctionPrompt}`.trim() }
         : settings;
-      const images = useVirtualRoom
-        ? await generateVirtualRoomImages(sofaImage, analysis, generationSettings, platform.context, platform.prompt)
-        : await generatePlacementImages(clearedRoomImage as UploadedImage, sofaForegroundImage as UploadedImage, sofaImage, [], analysis, generationSettings, platform.context, platform.prompt);
+      const backgrounds = useVirtualRoom
+        ? await generateVirtualRoomBackgrounds(analysis, generationSettings, platform.context, platform.prompt)
+        : await generatePlacementBackgrounds(clearedRoomImage as UploadedImage, analysis, generationSettings, platform.context, platform.prompt);
+      const images = await Promise.all(backgrounds.map(async (background) => ({
+        ...background,
+        imageUrl: await composeLockedProduct(background.imageUrl, sofaForegroundImage as UploadedImage, background.perspective)
+      })));
       if (images.length !== generationSettings.perspectives.length) {
         throw new Error(`视角结果不完整：已选择 ${generationSettings.perspectives.length} 个视角，但仅生成 ${images.length} 张图片。请重新生成。`);
       }
+      const qualities = !useVirtualRoom && roomImage
+        ? await Promise.all(images.map((item) => checkGeneratedPlacement(
+          roomImage,
+          sofaImage,
+          [],
+          item.imageUrl,
+          analysis,
+          generationSettings,
+          platform.context,
+          platform.prompt
+        )))
+        : [];
+      const qualityIssues = qualities.flatMap((quality, index) => quality.passed ? [] : [`${images[index].title}：${quality.issues.join("；")}`]);
+      if (qualityIssues.length) {
+        throw new Error(`产品一致性质检未通过，已拒绝展示本次结果：${qualityIssues.join("；")}`);
+      }
+
       const generated: GeneratedImageResult[] = images.map((item, index) => ({
         id: `${Date.now()}-${index}`,
         perspective: item.perspective,
         title: item.title,
         imageUrl: item.imageUrl,
-        uploadStatus: useVirtualRoom || isStandaloneTrial ? "skipped" : "pending"
+        uploadStatus: useVirtualRoom || isStandaloneTrial ? "skipped" : "pending",
+        quality: qualities[index]
       }));
 
       if (!useVirtualRoom && !isStandaloneTrial) {
@@ -472,29 +497,6 @@ export function VillaSofaPlacementTool() {
         await uploadGeneratedResults(generated);
       }
 
-      if (!useVirtualRoom && generated.length && roomImage) {
-        setStatus("试摆效果已生成，正在自动检查是否符合确认方案...");
-        try {
-          const qualities = await Promise.all(generated.map((item) => checkGeneratedPlacement(
-            roomImage,
-            sofaImage,
-            [],
-            item.imageUrl,
-            analysis,
-            generationSettings,
-            platform.context,
-            platform.prompt
-          )));
-          setResults((current) => current.map((item, index) => ({ ...item, quality: qualities[index] })));
-          const issues = qualities.flatMap((quality, index) => quality.passed ? [] : [`${generated[index].title}：${quality.issues.join("；")}`]);
-          setStatus(issues.length ? "试摆效果已生成，请查看自动检查建议" : "试摆效果已生成并通过自动检查");
-          if (issues.length) {
-            addChatMessage({ role: "assistant", text: `自动检查发现：${issues.join("；")}。您可以返回调整方案后重新生成。` });
-          }
-        } catch {
-          setStatus("试摆效果已生成，自动检查暂不可用，请人工确认效果");
-        }
-      }
     } catch (err) {
       setError(userFacingError(err, "生成失败"));
       setGuidedStep("review");
@@ -1044,7 +1046,7 @@ function ReviewStep({
                     {isRefreshingPlan ? <Loader2 className={styles.spin} size={16} /> : <RefreshCcw size={16} />}
                     按当前要求重新规划
                   </button>
-                  {sofaForegroundImage && <span>沙发前景已锁定</span>}
+                  {sofaForegroundImage && <span>原始产品图已锁定</span>}
                 </div>
                 <div className={styles.planGrid}>
                   <PlanField label="摆放位置" value={analysis.placementPlan.placement} onChange={(value) => onPlanChange("placement", value)} />
