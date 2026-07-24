@@ -313,11 +313,10 @@ function requestImageGenerateContent(body: GeminiRequestBody, apiKey: string, mo
       contents: [{ role: "user", parts }],
       generationConfig: {
         responseModalities: ["Image"],
-        responseFormat: {
-          image: {
-            aspectRatio: body.settings?.ratio || "16:9",
-            ...(model.includes("3") ? { imageSize: body.settings?.clarity || "1K" } : {})
-          }
+        // Gemini generateContent uses imageConfig (not responseFormat.image) for aspect ratio / size.
+        imageConfig: {
+          aspectRatio: body.settings?.ratio || "16:9",
+          ...(model.includes("3") ? { imageSize: body.settings?.clarity || "1K" } : {})
         }
       }
     })
