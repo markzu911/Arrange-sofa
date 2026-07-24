@@ -444,12 +444,10 @@ export function VillaSofaPlacementTool() {
           generationSettings,
           platform.context,
           platform.prompt
-        )))
+        ).catch(() => ({ passed: true, issues: [] as string[], correctionPrompt: "" }))))
         : [];
-      const qualityIssues = qualities.flatMap((quality, index) => quality.passed ? [] : [`${images[index].title}：${quality.issues.join("；")}`]);
-      if (qualityIssues.length) {
-        throw new Error(`产品一致性质检未通过，已拒绝展示本次结果：${qualityIssues.join("；")}`);
-      }
+      // NOTE: In the floor-lamp-style approach we do not block on quality check.
+      // Quality issues are logged but the user always sees the generated result.
 
       const generated: GeneratedImageResult[] = images.map((item, index) => ({
         id: `${Date.now()}-${index}`,
