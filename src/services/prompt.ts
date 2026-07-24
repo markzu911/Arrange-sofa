@@ -59,12 +59,13 @@ ${JSON.stringify(identity, null, 2)}`;
  *  - close: macro product detail shot, fundamentally different from spatial views */
 const CAMERA_INSTRUCTIONS: Record<string, { guidance: string; perspective: string }> = {
   wide: {
-    guidance: `=== CAMERA: LOCALIZED CORNER VIEW (远景局部取景 — 沙发居中) ===
+    guidance: `=== CAMERA: WIDE ROOM VIEW (远景 - 完整沙发 + 大部分环境) ===
 - The sofa MUST be the absolute main subject, positioned perfectly CENTERED in the frame. 沙发必须是画面绝对主体且居中。
-- Background: a tightly framed localized corner of the room — just the sofa's immediate vicinity (e.g., one side table, partial wall, a section of rug). 严禁展示整个房间！DO NOT render a wide full-room shot.
-- Show the complete sofa from top to bottom, naturally placed in its corner.
-- Sofa occupies 40-55% of the frame.`,
-    perspective: `VIEW: Localized corner photograph with sofa centered. Camera frames a section of the room around the sofa, NOT the entire room layout. This is a real estate-style corner shot, not a panorama.`
+- Show the complete sofa and a large portion of the surrounding room environment.
+- The camera should be pulled back enough to reveal the sofa placement relationship with walls, windows, floor, rug, coffee table, and nearby furniture.
+- The sofa remains the main subject, but the room context must be clearly visible.
+- Sofa occupies about 25-40% of the frame.`,
+    perspective: `VIEW: Wide interior placement photograph with sofa centered. Show the complete sofa plus clear room context, including its relationship to walls, windows, floor, rug, coffee table, and nearby furniture. This is not a close localized corner shot.`
   },
   medium: {
     guidance: `=== CAMERA: PRODUCT-DOMINANT MID-VIEW (中近景 — 沙发主体特写) ===
