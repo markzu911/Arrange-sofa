@@ -220,6 +220,13 @@ function buildGenerationParts(body: GeminiRequestBody): Part[] {
     parts.push({ inlineData: { mimeType: body.productReferenceImage.mimeType || "image/jpeg", data: body.productReferenceImage.base64 } });
   }
 
+  // Log the full prompt for debugging — lets us verify what Gemini actually receives
+  if (body.systemPrompt) {
+    console.log("[api/proxy] GENERATION PROMPT (mode=generate, model=" + mapModel(body.model, body.mode) + "):");
+    console.log(body.systemPrompt);
+    console.log("[api/proxy] END PROMPT — parts count:", parts.length + 1, "(images:", parts.filter(p => "inlineData" in p).length, ")");
+  }
+
   // Prompt LAST — critical for Gemini's sequential processing
   parts.push({ text: body.systemPrompt || "" });
 

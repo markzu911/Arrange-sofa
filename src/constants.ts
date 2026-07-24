@@ -36,14 +36,6 @@ export const virtualRoomStyleLabels: Record<VirtualRoomStyle, string> = {
   minimal: "极简黑白"
 };
 
-export const sofaPlacementSystemPrompt = `You are a professional interior design assistant. Your task is to naturally place the target sofa into the room and generate a photorealistic interior photograph.
-
-RULES:
-1. The generated sofa MUST exactly match the reference product image — this is the single most important constraint.
-2. The sofa must be naturally integrated with correct perspective, scale, ground contact, shadows, and ambient lighting.
-3. Preserve the room's main architecture and existing furniture. Do not add unrequested elements or watermarks.
-4. Follow user notes and confirmed placement plans. When no position is specified, choose the most natural location.`;
-
 /** Detailed style specifications for virtual rooms, following the floor lamp project's STYLE_SPECS approach. */
 export const VIRTUAL_ROOM_STYLE_SPECS: Record<VirtualRoomStyle, string> = {
   modern: `MASTERPIECE ARCHITECTURE: Contemporary luxury modern living room (现代简约风格客厅). Open floor plan with clean straight lines.

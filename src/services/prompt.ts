@@ -1,6 +1,5 @@
 import {
   perspectiveLabels,
-  sofaPlacementSystemPrompt,
   VIRTUAL_ROOM_STYLE_SPECS,
   virtualRoomStyleLabels,
 } from "../constants";

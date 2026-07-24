@@ -292,8 +292,7 @@ function requestImageInteraction(body, apiKey, model, perspective) {
       response_format: {
         type: "image",
         mime_type: "image/jpeg",
-        aspect_ratio: body.settings?.ratio || "16:9",
-        image_size: body.settings?.clarity || "1K"
+        aspect_ratio: body.settings?.ratio || "16:9"
       }
     })
   }).finally(() => clearTimeout(timeout));
@@ -721,6 +720,13 @@ function buildGenerationParts(body) {
   if (body.sofaImage?.base64) {
     parts.push({ text: "IMAGE 2 [EXACT REFERENCE SOFA PRODUCT — 必须100%按此图还原沙发]:" });
     parts.push({ inlineData: { mimeType: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 } });
+  }
+
+  // Log the full prompt for debugging
+  if (body.systemPrompt) {
+    console.log("[local-trial] GENERATION PROMPT (model=" + model + "):");
+    console.log(body.systemPrompt);
+    console.log("[local-trial] END PROMPT");
   }
 
   parts.push({ text: body.systemPrompt || "" });
