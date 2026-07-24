@@ -36,9 +36,6 @@ interface GeminiRequestBody {
   productReferenceImage?: { base64: string; mimeType: string };
   resultImage?: { base64: string; mimeType: string };
   systemPrompt?: string;
-  perspectivePrompts?: Record<string, string>;
-  isCameraVariation?: boolean;
-  backgroundOnly?: boolean;
   settings?: {
     perspectives?: string[];
     ratio?: string;
@@ -297,12 +294,26 @@ function shouldTryGenerateContent(status: number, raw: string) {
 }
 
 function requestImageGenerateContent(body: GeminiRequestBody, apiKey: string, model: string, perspective: string) {
-  const prompt = body.perspectivePrompts?.[perspective] || body.systemPrompt || "";
-  const parts: GeminiPart[] = [{ text: prompt }];
-  // Same order as the interaction request: room images first, then product images
-  const images = [body.roomImage, ...(body.roomReferenceImages || []), body.sofaImage, body.productReferenceImage];
-  for (const image of images) {
-    if (image?.base64) parts.push({ inlineData: { mimeType: image.mimeType || "image/jpeg", data: image.base64 } });
+  const prompt = body.systemPrompt || "";
+  const parts: GeminiPart[] = [];
+
+  // Same interleaved approach as requestImageInteraction
+  parts.push({ text: prompt });
+
+  if (body.roomImage?.base64) {
+    parts.push({ text: "IMAGE 1 [REFERENCE ROOM ENVIRONMENT]:" });
+    parts.push({ inlineData: { mimeType: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 } });
+  }
+  for (const image of body.roomReferenceImages || []) {
+    if (image.base64) parts.push({ inlineData: { mimeType: image.mimeType || "image/jpeg", data: image.base64 } });
+  }
+  if (body.sofaImage?.base64) {
+    parts.push({ text: "IMAGE 2 [EXACT REFERENCE SOFA PRODUCT IMAGE TO REPLICATE - 必须100%按此图还原沙发]:" });
+    parts.push({ inlineData: { mimeType: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 } });
+  }
+  if (body.productReferenceImage?.base64 && body.productReferenceImage.base64 !== body.sofaImage?.base64) {
+    parts.push({ text: "IMAGE 3 [PRODUCT IDENTITY REFERENCE]:" });
+    parts.push({ inlineData: { mimeType: body.productReferenceImage.mimeType || "image/jpeg", data: body.productReferenceImage.base64 } });
   }
   return fetchWithDiagnostics(`generateContent:${model}:${perspective}`, `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${apiKey}`, {
     method: "POST",
@@ -326,10 +337,10 @@ function requestImageInteraction(body: GeminiRequestBody, apiKey: string, model:
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 75_000);
   const isAssetEdit = body.mode === "cutout" || body.mode === "erase";
-  const prompt = body.perspectivePrompts?.[perspective] || body.systemPrompt || "";
+  const prompt = body.systemPrompt || "";
 
-  // Following the floor lamp project's approach: send all images directly.
-  // Each perspective is independently generated — no master+variation or backgroundOnly logic.
+  // Following the floor lamp project's approach: interleaved text labels + images.
+  // Each image gets a clear role label so Gemini knows which is room vs product.
   const input = isAssetEdit
     ? [
         { type: "text", text: prompt },
@@ -339,13 +350,7 @@ function requestImageInteraction(body: GeminiRequestBody, apiKey: string, model:
               ? [{ type: "image", mime_type: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 }]
               : [])
       ]
-    : [
-        { type: "text", text: `${prompt}\n\n请直接生成最终效果图。` },
-        ...(body.roomImage?.base64 ? [{ type: "image", mime_type: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 }] : []),
-        ...((body.roomReferenceImages || []).filter((image) => image.base64).map((image) => ({ type: "image", mime_type: image.mimeType || "image/jpeg", data: image.base64 }))),
-        ...(body.sofaImage?.base64 ? [{ type: "image", mime_type: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 }] : []),
-        ...(body.productReferenceImage?.base64 ? [{ type: "image", mime_type: body.productReferenceImage.mimeType || "image/jpeg", data: body.productReferenceImage.base64 }] : [])
-      ];
+    : buildInterleavedInput(prompt, body);
   return fetchWithDiagnostics(`interactions:${model}:${perspective}:independent`, "https://generativelanguage.googleapis.com/v1beta/interactions", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
@@ -361,6 +366,43 @@ function requestImageInteraction(body: GeminiRequestBody, apiKey: string, model:
       }
     })
   }).finally(() => clearTimeout(timeout));
+}
+
+/** Build interleaved input parts following the floor lamp project's approach.
+ *  Each image gets a clear text label (e.g. "IMAGE 1 [REFERENCE ROOM]") so
+ *  Gemini can distinguish room images from product reference images. */
+function buildInterleavedInput(prompt: string, body: GeminiRequestBody) {
+  const parts: Array<{ type: string; text?: string; mime_type?: string; data?: string }> = [];
+
+  // The full prompt comes first — it already contains detailed camera & product instructions
+  parts.push({ type: "text", text: prompt });
+
+  // IMAGE 1: Room environment
+  if (body.roomImage?.base64) {
+    parts.push({ type: "text", text: "IMAGE 1 [REFERENCE ROOM ENVIRONMENT]:" });
+    parts.push({ type: "image", mime_type: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 });
+  }
+
+  // Additional room reference images
+  for (const image of body.roomReferenceImages || []) {
+    if (image.base64) {
+      parts.push({ type: "image", mime_type: image.mimeType || "image/jpeg", data: image.base64 });
+    }
+  }
+
+  // IMAGE 2: Sofa product — the exact reference that MUST be replicated 100%
+  if (body.sofaImage?.base64) {
+    parts.push({ type: "text", text: "IMAGE 2 [EXACT REFERENCE SOFA PRODUCT IMAGE TO REPLICATE - 必须100%按此图还原沙发]:" });
+    parts.push({ type: "image", mime_type: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 });
+  }
+
+  // IMAGE 3: Product reference (if different from sofa image — for virtual rooms, same image is sent twice for emphasis)
+  if (body.productReferenceImage?.base64 && body.productReferenceImage.base64 !== body.sofaImage?.base64) {
+    parts.push({ type: "text", text: "IMAGE 3 [PRODUCT IDENTITY REFERENCE - 产品身份唯一依据]:" });
+    parts.push({ type: "image", mime_type: body.productReferenceImage.mimeType || "image/jpeg", data: body.productReferenceImage.base64 });
+  }
+
+  return parts;
 }
 
 async function fetchWithDiagnostics(label: string, url: string, init: RequestInit) {

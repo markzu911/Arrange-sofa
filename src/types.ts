@@ -139,9 +139,7 @@ export interface GeminiGenerateRequest {
   analysis?: SceneAnalysis;
   settings?: PlacementSettings;
   systemPrompt: string;
-  perspectivePrompts?: Record<string, string>;
   resultImage?: Pick<UploadedImage, "base64" | "mimeType">;
-  backgroundOnly?: boolean;
 }
 
 export interface GeminiAnalyzeResponse {

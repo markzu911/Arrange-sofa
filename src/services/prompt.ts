@@ -134,20 +134,6 @@ export function buildGenerationPrompt(
     .join("\n");
 }
 
-/** Build camera variation prompt for generating mid/close perspectives as independent scenes.
- *  Following the floor lamp project's approach — each perspective is independent, not derived from a master. */
-export function buildCameraVariationPrompt(
-  analysis: SceneAnalysis,
-  settings: PlacementSettings,
-  perspective: string,
-  extraContext = "",
-  extraPrompt: string[] = [],
-): string {
-  // Same as buildGenerationPrompt — each perspective is independently generated
-  // The "variation" naming is kept for API compatibility but the logic is the same
-  return buildGenerationPrompt(analysis, settings, perspective, extraContext, extraPrompt);
-}
-
 /** Build virtual room generation prompt.
  *  Following the floor lamp project's approach with detailed STYLE_SPECS. */
 export function buildVirtualRoomPrompt(

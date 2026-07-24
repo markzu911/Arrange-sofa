@@ -273,11 +273,22 @@ function shouldTryGenerateContent(status, raw) {
 }
 
 function requestImageGenerateContent(body, apiKey, model, perspective) {
-  const prompt = body.perspectivePrompts?.[perspective] || body.systemPrompt || "";
+  const prompt = body.systemPrompt || "";
   const parts = [{ text: prompt }];
-  const images = [body.roomImage, ...(body.roomReferenceImages || []), body.sofaImage, body.productReferenceImage];
-  for (const image of images) {
-    if (image?.base64) parts.push({ inlineData: { mimeType: image.mimeType || "image/jpeg", data: image.base64 } });
+  if (body.roomImage?.base64) {
+    parts.push({ text: "IMAGE 1 [REFERENCE ROOM ENVIRONMENT]:" });
+    parts.push({ inlineData: { mimeType: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 } });
+  }
+  for (const image of body.roomReferenceImages || []) {
+    if (image.base64) parts.push({ inlineData: { mimeType: image.mimeType || "image/jpeg", data: image.base64 } });
+  }
+  if (body.sofaImage?.base64) {
+    parts.push({ text: "IMAGE 2 [EXACT REFERENCE SOFA PRODUCT IMAGE TO REPLICATE - 必须100%按此图还原沙发]:" });
+    parts.push({ inlineData: { mimeType: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 } });
+  }
+  if (body.productReferenceImage?.base64 && body.productReferenceImage.base64 !== body.sofaImage?.base64) {
+    parts.push({ text: "IMAGE 3 [PRODUCT IDENTITY REFERENCE]:" });
+    parts.push({ inlineData: { mimeType: body.productReferenceImage.mimeType || "image/jpeg", data: body.productReferenceImage.base64 } });
   }
   return fetchWithDiagnostics(`generateContent:${model}:${perspective}`, `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${apiKey}`, {
     method: "POST",
@@ -301,7 +312,7 @@ function requestImageInteraction(body, apiKey, model, perspective) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 75_000);
   const isAssetEdit = body.mode === "cutout" || body.mode === "erase";
-  const prompt = body.perspectivePrompts?.[perspective] || body.systemPrompt || "";
+  const prompt = body.systemPrompt || "";
   const input = isAssetEdit
     ? [
         { type: "text", text: prompt },
@@ -311,13 +322,7 @@ function requestImageInteraction(body, apiKey, model, perspective) {
               ? [{ type: "image", mime_type: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 }]
               : [])
       ]
-    : [
-        { type: "text", text: `${prompt}\n\n请生成完整的 ${perspective === "wide" ? "远景房间全景" : perspective === "medium" ? "中近景沙发主体" : "近景产品细节"} 效果图。沙发产品身份必须以原始产品参考图为准，EXACT 1:1 VISUAL REPLICA。请直接输出最终效果图。` },
-        ...(body.roomImage?.base64 ? [{ type: "image", mime_type: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 }] : []),
-        ...((body.roomReferenceImages || []).filter((image) => image.base64).map((image) => ({ type: "image", mime_type: image.mimeType || "image/jpeg", data: image.base64 }))),
-        ...(body.sofaImage?.base64 ? [{ type: "image", mime_type: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 }] : []),
-        ...(body.productReferenceImage?.base64 ? [{ type: "image", mime_type: body.productReferenceImage.mimeType || "image/jpeg", data: body.productReferenceImage.base64 }] : [])
-      ];
+    : buildInterleavedInput(prompt, body);
   return fetchWithDiagnostics(`interactions:${model}:${perspective}:independent`, "https://generativelanguage.googleapis.com/v1beta/interactions", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
@@ -333,6 +338,27 @@ function requestImageInteraction(body, apiKey, model, perspective) {
       }
     })
   }).finally(() => clearTimeout(timeout));
+}
+
+function buildInterleavedInput(prompt, body) {
+  const parts = [];
+  parts.push({ type: "text", text: prompt });
+  if (body.roomImage?.base64) {
+    parts.push({ type: "text", text: "IMAGE 1 [REFERENCE ROOM ENVIRONMENT]:" });
+    parts.push({ type: "image", mime_type: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 });
+  }
+  for (const image of body.roomReferenceImages || []) {
+    if (image.base64) parts.push({ type: "image", mime_type: image.mimeType || "image/jpeg", data: image.base64 });
+  }
+  if (body.sofaImage?.base64) {
+    parts.push({ type: "text", text: "IMAGE 2 [EXACT REFERENCE SOFA PRODUCT IMAGE TO REPLICATE - 必须100%按此图还原沙发]:" });
+    parts.push({ type: "image", mime_type: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 });
+  }
+  if (body.productReferenceImage?.base64 && body.productReferenceImage.base64 !== body.sofaImage?.base64) {
+    parts.push({ type: "text", text: "IMAGE 3 [PRODUCT IDENTITY REFERENCE]:" });
+    parts.push({ type: "image", mime_type: body.productReferenceImage.mimeType || "image/jpeg", data: body.productReferenceImage.base64 });
+  }
+  return parts;
 }
 
 async function fetchWithDiagnostics(label, url, init) {
