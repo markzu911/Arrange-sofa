@@ -6,7 +6,7 @@ const BODY_LIMIT = 20 * 1024 * 1024;
 
 class ImageGenerationUnavailable extends Error {
   constructor() {
-    super("图片生成服务当前繁忙，请稍后重试。已尝试高精度与备用模型，但均未在限定时间内响应。");
+    super("当前高保真图片模型未能返回结果，请稍后重试。为避免沙发产品变形，系统不会自动切换到其他模型。");
   }
 }
 
@@ -281,7 +281,7 @@ async function generateImagesWithSDK(client: GoogleGenAI, body: GeminiRequestBod
   return results;
 }
 
-/** Try generateContent (SDK) first, then Interactions API as fallback. */
+/** Keep all generation attempts on the requested model to avoid product-fidelity drift. */
 async function generateImageWithFallback(
   client: GoogleGenAI,
   body: GeminiRequestBody,
@@ -313,28 +313,6 @@ async function generateImageWithFallback(
     if (interactionResult) return interactionResult;
   } catch (error) {
     console.warn("[api/proxy] Interactions fallback failed", { model, perspective, ...describeError(error) });
-  }
-
-  // FALLBACK 2: try different model via SDK
-  const fallbackModel = process.env.GEMINI_IMAGE_MODEL_FALLBACK || "gemini-2.5-flash-image";
-  if (fallbackModel !== model) {
-    try {
-      const parts = buildGenerationParts(body);
-      const response = await client.models.generateContent({
-        model: fallbackModel,
-        contents: { parts },
-        config: {
-          imageConfig: {
-            aspectRatio: body.settings?.ratio || "16:9"
-          }
-        }
-      });
-
-      const image = extractSDKImage(response);
-      if (image) return image;
-    } catch (error) {
-      console.warn("[api/proxy] fallback model failed", { fallbackModel, perspective, ...describeError(error) });
-    }
   }
 
   throw new ImageGenerationUnavailable();

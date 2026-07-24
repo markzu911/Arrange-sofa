@@ -10,7 +10,7 @@ const preferredPort = Number(process.env.PORT || 5174);
 
 class ImageGenerationUnavailable extends Error {
   constructor() {
-    super("图片生成服务当前繁忙，请稍后重试。已尝试高精度与备用模型，但均未在限定时间内响应。");
+    super("当前高保真图片模型未能返回结果，请稍后重试。为避免沙发产品变形，系统不会自动切换到其他模型。");
   }
 }
 
@@ -157,9 +157,6 @@ async function handleGemini(req, res) {
   sendJson(res, 200, { success: false, message: "未知操作模式" });
 }
 
-  sendJson(res, 200, parseGeneratedImages(data, body));
-}
-
 async function generateImagesWithInteractions(body, apiKey, model) {
   const requested = body.settings?.perspectives?.length ? body.settings.perspectives : ["medium"];
   const results = await Promise.all(requested.map(async (perspective) => {
@@ -195,27 +192,8 @@ async function requestImageWithFallback(body, apiKey, model, perspective) {
     if (!model.includes("pro-image") || !isRequestTimeout(error)) throw error;
   }
 
-  const fallbackModel = process.env.GEMINI_IMAGE_MODEL_FALLBACK || process.env.GEMINI_IMAGE_MODEL || "gemini-2.5-flash-image";
-  if (fallbackModel === model) {
-    if (primary) return { ...primary, model, api: "generateContent" };
-    throw new ImageGenerationUnavailable();
-  }
-
-  try {
-    const response = await requestImageGenerateContent(body, apiKey, fallbackModel, perspective);
-    const raw = await response.text();
-    if (!response.ok && shouldTryInteractions(response.status, raw)) {
-      const fallbackResponse = await requestImageInteraction(body, apiKey, fallbackModel, perspective);
-      const fallbackRaw = await fallbackResponse.text();
-      if (fallbackResponse.ok) return { response: fallbackResponse, raw: fallbackRaw, model: fallbackModel, api: "interactions" };
-    }
-    if (!response.ok && isHighDemand(response.status, raw)) throw new ImageGenerationUnavailable();
-    return { response, raw, model: fallbackModel, api: "generateContent" };
-  } catch (error) {
-    if (error instanceof ImageGenerationUnavailable) throw error;
-    if (isRequestTimeout(error)) throw new ImageGenerationUnavailable();
-    throw error;
-  }
+  if (primary) return { ...primary, model, api: "generateContent" };
+  throw new ImageGenerationUnavailable();
 }
 
 function shouldTryInteractions(status, raw) {
@@ -771,27 +749,6 @@ async function generateImageWithSDK(client, body, model, perspective) {
     if (image) return image;
   } catch (error) {
     console.warn("[local-trial] generateContent SDK failed", { model, perspective, error: error.message });
-  }
-
-  // FALLBACK: try different model via SDK
-  const fallbackModel = process.env.GEMINI_IMAGE_MODEL_FALLBACK || "gemini-2.5-flash-image";
-  if (fallbackModel !== model) {
-    try {
-      const parts = buildGenerationParts(body);
-      const response = await client.models.generateContent({
-        model: fallbackModel,
-        contents: { parts },
-        config: {
-          imageConfig: {
-            aspectRatio: body.settings?.ratio || "16:9"
-          }
-        }
-      });
-      const image = extractSDKImage(response);
-      if (image) return image;
-    } catch (error) {
-      console.warn("[local-trial] fallback model failed", { fallbackModel, perspective, error: error.message });
-    }
   }
 
   throw new ImageGenerationUnavailable();

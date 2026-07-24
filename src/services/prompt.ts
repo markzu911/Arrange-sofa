@@ -3,7 +3,7 @@ import {
   VIRTUAL_ROOM_STYLE_SPECS,
   virtualRoomStyleLabels,
 } from "../constants";
-import type { PlacementSettings, SceneAnalysis, SofaIdentity } from "../types";
+import type { PlacementSettings, SceneAnalysis } from "../types";
 
 /** Build human model prompt section. */
 function buildHumanModelPrompt(settings: PlacementSettings): string {
@@ -25,47 +25,45 @@ function buildHumanModelPrompt(settings: PlacementSettings): string {
   return `5. PERSONA / HUMAN PRESENCE: Include ${genderLabel}, ${ageLabel} sitting naturally on the target sofa. Clothing and posture must match the room's style. The model must NOT obscure the sofa's key details — armrest, backrest, cushion, material, and silhouette must remain clearly visible. 必须包含一个自然坐在沙发上的${ageLabel}${genderLabel}，但不遮挡沙发主体特征。`;
 }
 
-/** Build product identity prompt — following the floor lamp project's approach exactly:
- *  Use the `structure` field as the PRIMARY textual anchor, which contains both
- *  positive identification (what IS present) AND negative exclusion (what is NOT present).
- *  This is how the floor lamp project uses `lampAnalysis.structure`. */
+/** Build product identity prompt with the uploaded product image as the only source of truth. */
 export function buildProductIdentityPrompt(analysis: SceneAnalysis): string {
   const identity = analysis.sofaIdentity;
   const structureAnchor = identity.structure || "以参考图为准";
 
   return `HIGHEST PRIORITY CONSTRAINTS (MUST BE STRICTLY FOLLOWED):
 
-1. NO UNREQUESTED OR HALLUCINATED SOFA PARTS (严禁出现沙发原本没有的任何部件 - 绝对精细100%还原):
-   You MUST reproduce ONLY the exact physical parts visible in the reference sofa image (IMAGE 2) and described in the sofa analysis structure: ${structureAnchor}
-   STRICTLY FORBIDDEN: Do NOT add buttons, stitching patterns, trim, extra cushions, decorative pillows, structural changes, or any detail NOT visible in IMAGE 2. Any added detail is a CRITICAL FAILURE.
-   严禁增加任何参考图中不存在的设计元素！
+ABSOLUTE PRIORITY ORDER: PRODUCT FIDELITY > PHYSICAL PLACEMENT > CAMERA COMPOSITION > ROOM / STYLE / DECORATION.
+If any lower-priority instruction would change the sofa, relax that lower-priority instruction instead. 产品一致性高于构图、环境、风格和其他全部要求。
 
-2. ABSOLUTE SOFA FAITHFULNESS & STRUCTURAL INTEGRITY (100%还原沙发整体结构与颜色):
-   You MUST completely and exactly reproduce the sofa's original appearance, colors, materials, structure, and shape from IMAGE 2. 严禁任何视觉偏差！
+1. IMAGE 2 IS THE SOLE PRODUCT TRUTH (产品图是唯一事实来源):
+   Reproduce the exact same sofa shown in IMAGE 2, not a similar sofa and not a style-matched substitute.
+   Preserve every clearly visible component exactly as shown, including overall silhouette, module and seat count, proportions, armrests, backrests, cushion segmentation, visible seams and surface details, material, color, legs, accessories, and asymmetry.
+   Never add, remove, merge, split, redesign, restyle, or reinterpret any sofa component. 不能因为房间、风格或构图改变产品。
+
+2. TEXT IS SECONDARY (文字分析只作辅助):
+   The analysis below may be used only when it agrees with details clearly visible in IMAGE 2. Ignore any uncertain, missing, or conflicting textual detail. Never invent a product feature from text alone.
+   Secondary structure hint: ${structureAnchor}
+
+3. PHYSICAL INTEGRITY:
    REALISTIC SCALE & PROPORTION: The sofa must maintain realistic scale relative to the room. It MUST NOT be unnaturally oversized or undersized.
-   PHYSICAL INTEGRITY: The sofa is ONE SINGLE connected physical object. The base MUST rest firmly on the floor.
+   Keep the exact connected or modular relationships visible in IMAGE 2. The base must rest naturally on the floor.
 
-3. REFERENCE IMAGE IS ABSOLUTE TRUTH — If text descriptions conflict with IMAGE 2, IMAGE 2 wins. The product in the result must be the SAME product, not a similar-looking substitute. 参考图是绝对真理，任何文字描述与图片冲突时以图片为准。
-
-4. ROOM LAYOUT CONSISTENCY — Keep the exact room architecture, walls, windows, and existing furniture from IMAGE 1. Do NOT add windows, walls, or furniture that do not exist. 严禁增加原图不存在的窗户、墙面或家具。
-
-THE SOFA TO INTEGRATE (PRODUCT ANALYSIS RESULTS — these must be EXACTLY reproduced):
-${JSON.stringify(identity, null, 2)}`;
+4. ROOM IS SECONDARY:
+   If IMAGE 1 is provided, preserve its overall room identity, major architecture, perspective, and lighting approximately. Minor differences in decoration or background furniture are acceptable. Never alter the sofa to make the room easier to reproduce.`;
 }
 
-/** Camera instructions for each perspective — following floor lamp project's approach:
- *  - wide: LOCALIZED corner view (NOT full room), product centered
+/** Camera instructions for each perspective:
+ *  - wide: complete sofa with substantial room context
  *  - medium: product dominates frame, only immediate context visible
  *  - close: macro product detail shot, fundamentally different from spatial views */
 const CAMERA_INSTRUCTIONS: Record<string, { guidance: string; perspective: string }> = {
   wide: {
     guidance: `=== CAMERA: WIDE ROOM VIEW (远景 - 完整沙发 + 大部分环境) ===
 - The sofa MUST be the absolute main subject, positioned perfectly CENTERED in the frame. 沙发必须是画面绝对主体且居中。
-- Show the complete sofa and a large portion of the surrounding room environment.
-- The camera should be pulled back enough to reveal the sofa placement relationship with walls, windows, floor, rug, coffee table, and nearby furniture.
-- The sofa remains the main subject, but the room context must be clearly visible.
-- Sofa occupies about 25-40% of the frame.`,
-    perspective: `VIEW: Wide interior placement photograph with sofa centered. Show the complete sofa plus clear room context, including its relationship to walls, windows, floor, rug, coffee table, and nearby furniture. This is not a close localized corner shot.`
+- Show the complete exact sofa plus a substantial portion of the room environment.
+- Sofa occupies about 40-55% of the frame. Preserve the product unchanged even if framing or room details need adjustment.
+- Keep the room broadly consistent with IMAGE 1; exact reproduction of minor furniture and decoration is not required.`,
+    perspective: `VIEW: Wide interior placement photograph with the complete sofa centered and clearly readable as the main subject. Show enough surrounding room to understand placement, while allocating visual attention and detail to the exact product.`
   },
   medium: {
     guidance: `=== CAMERA: PRODUCT-DOMINANT MID-VIEW (中近景 — 沙发主体特写) ===
@@ -78,9 +76,9 @@ const CAMERA_INSTRUCTIONS: Record<string, { guidance: string; perspective: strin
   close: {
     guidance: `=== CAMERA: MACRO CLOSE-UP (近景特写 — 产品材质核心) ===
 - Sofa occupies 75-85% of the frame — this is a PRODUCT DETAIL photograph, NOT a spatial photograph. 这是一张产品材质特写，不是空间摄影。
-- Camera at 0.8-1.2m distance, armrest height — focusing on material texture, stitching, cushion softness.
+- Camera at 0.8-1.2m distance, armrest height — focusing only on surface details that are actually visible in IMAGE 2.
 - Only a small sliver of floor/wall visible as environmental context. The sofa must NOT look like a cutout paste-up.`,
-    perspective: `VIEW: Product detail macro shot showing material grain, stitching, texture quality. This is fundamentally different from the wide/medium views — it is a close-up product photography, not a cropped spatial view.`
+    perspective: `VIEW: Product detail macro shot showing the exact visible material and construction details from IMAGE 2. This is fundamentally different from the wide/medium views — it is a close-up product photograph, not a cropped spatial view.`
   }
 };
 
@@ -107,11 +105,11 @@ Advice: ${analysis.placementAdvice}`,
     camera.guidance,
     camera.perspective,
     perspective === "close"
-      ? `6. FOCUS & DEPTH OF FIELD (对焦与视觉质感): FOR CLOSE-UP VIEW (近景特写): The sofa's texture, stitching, and material grain must be in crisp, razor-sharp focus in the foreground, with the authentic partial room background softly rendering behind it with natural close-up macro photography depth. 近景特写：沙发材质纹理必须锐利清晰，背景自然柔焦。`
+      ? `6. FOCUS & DEPTH OF FIELD (对焦与视觉质感): FOR CLOSE-UP VIEW (近景特写): Keep only the product details actually visible in IMAGE 2 crisp and sharp in the foreground, with the partial room background softly rendered behind them. Do not invent stitching, trim, texture, or construction details. 近景只清晰展示原产品图中真实存在的细节，严禁补造。`
       : `6. FOCUS & DEPTH OF FIELD (对焦与视觉质感): You MUST keep the ENTIRE photograph (sofa, background wall, adjacent furniture, floor) completely sharp and clear in deep focus. DO NOT apply unnatural bokeh blur. 全景深清晰对焦，不要虚化背景。`,
     buildHumanModelPrompt(settings),
     settings.notes
-      ? `=== USER REQUIREMENTS (最高优先级) ===\n${settings.notes}`
+      ? `=== USER REQUIREMENTS (仅在不影响产品一致性时执行) ===\n${settings.notes}`
       : "",
     extraContext ? `平台上下文: ${extraContext}` : "",
     extraPrompt.length ? `平台关键词: ${extraPrompt.join("、")}` : "",
@@ -132,7 +130,8 @@ export function buildVirtualRoomPrompt(
   const styleSpec = VIRTUAL_ROOM_STYLE_SPECS[settings.virtualRoomStyle];
   const camera = CAMERA_INSTRUCTIONS[perspective] || CAMERA_INSTRUCTIONS.medium;
 
-  const roomStylePrompt = `CRITICAL ROOM STYLE MATCHING: You MUST strictly generate the room according to the textual design specifications below to perfectly capture the essence of "${styleLabel}". 必须严格按照以下【设计规范】生成极致完美的【${styleLabel}】风格样板间！
+  const roomStylePrompt = `SECONDARY ROOM STYLE GUIDANCE: Apply the following "${styleLabel}" specification only to the room architecture, lighting, palette, and non-sofa decoration.
+IGNORE every sofa, seating, upholstery, cushion, throw, product material, product color, or product shape example contained in the style specification. IMAGE 2 replaces all sofa examples and must remain completely unchanged. 风格只作用于环境，所有涉及沙发的风格描述一律忽略。
 
 DESIGN SPECIFICATION FOR THIS STYLE:
 ${styleSpec}`;
@@ -140,8 +139,8 @@ ${styleSpec}`;
   return [
     `A professional, ultra-high-resolution interior design photograph.
 Your task is to generate a virtual room and place the target sofa into it.`,
-    roomStylePrompt,
     buildProductIdentityPrompt(analysis),
+    roomStylePrompt,
     camera.guidance,
     camera.perspective,
     perspective === "close"
@@ -151,7 +150,7 @@ Your task is to generate a virtual room and place the target sofa into it.`,
     `=== PLACEMENT ===
 ${analysis.placementAdvice}`,
     settings.notes
-      ? `=== USER REQUIREMENTS ===\n${settings.notes}`
+      ? `=== USER REQUIREMENTS (apply only when consistent with product fidelity) ===\n${settings.notes}`
       : "",
     extraContext ? `平台上下文: ${extraContext}` : "",
     extraPrompt.length ? `平台关键词: ${extraPrompt.join("、")}` : "",
