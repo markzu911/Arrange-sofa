@@ -299,7 +299,6 @@ function requestImageGenerateContent(body, apiKey, model, perspective) {
       contents: [{ role: "user", parts }],
       generationConfig: {
         responseModalities: ["Image"],
-        // Following floor lamp project: only aspectRatio, no imageSize
         imageConfig: {
           aspectRatio: body.settings?.ratio || "16:9"
         }

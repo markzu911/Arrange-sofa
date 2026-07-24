@@ -231,7 +231,7 @@ async function callGenerateContent(
 ): Promise<unknown> {
   const response = await client.models.generateContent({
     model,
-    contents: [{ role: "user", parts }],
+    contents: { parts },
     config: {
       temperature: config.temperature ?? 0.2,
       responseMimeType: config.responseMimeType ?? "text/plain"
@@ -277,10 +277,11 @@ async function generateImageWithFallback(
     const parts = buildGenerationParts(body);
     const response = await client.models.generateContent({
       model,
-      contents: [{ role: "user", parts }],
+      contents: { parts },
       config: {
-        responseModalities: ["Image"],
-        ...(body.settings?.ratio ? { aspectRatio: body.settings.ratio } : {})
+        imageConfig: {
+          aspectRatio: body.settings?.ratio || "16:9"
+        }
       }
     });
 
@@ -305,10 +306,11 @@ async function generateImageWithFallback(
       const parts = buildGenerationParts(body);
       const response = await client.models.generateContent({
         model: fallbackModel,
-        contents: [{ role: "user", parts }],
+        contents: { parts },
         config: {
-          responseModalities: ["Image"],
-          ...(body.settings?.ratio ? { aspectRatio: body.settings.ratio } : {})
+          imageConfig: {
+            aspectRatio: body.settings?.ratio || "16:9"
+          }
         }
       });
 

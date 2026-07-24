@@ -49,21 +49,26 @@ SOFA IDENTITY (reference only — IMAGE 2 is the absolute truth):
 - Details: ${identity.details.join("、")}`;
 }
 
-/** Camera instructions for each perspective — specific and differentiated. */
+/** Camera instructions for each perspective — following floor lamp project's approach:
+ *  - wide: LOCALIZED corner view (NOT full room), product centered — similar to floor lamp's "far" view
+ *  - medium: product dominates frame, only immediate context visible
+ *  - close: macro product detail shot, fundamentally different from spatial views */
 const CAMERA_INSTRUCTIONS: Record<string, { guidance: string; perspective: string }> = {
   wide: {
-    guidance: `=== CAMERA: FAR WIDE VIEW (远景全景) ===
-- Sofa occupies 15-28% of the frame, naturally positioned in the room.
-- Camera at room entry/corner, eye height 1.5-1.7m, showing full room layout: walls, floor, ceiling, windows, doors, furniture.
-- Sofa must follow the same perspective grid as all room elements.`,
-    perspective: `VIEW: Complete room photograph from entry viewpoint. Sofa is clearly visible as part of the spatial composition. NEVER show just a blank wall or ceiling.`
+    guidance: `=== CAMERA: LOCALIZED CORNER VIEW (远景局部取景 — 沙发居中) ===
+- The sofa MUST be the absolute main subject, positioned perfectly CENTERED in the frame.
+- Background: a tightly framed localized corner of the room — just the sofa's immediate vicinity (e.g., one side table, partial wall, a section of rug). 严禁展示整个房间！DO NOT render a wide full-room shot.
+- Show the complete sofa from top to bottom, naturally placed in its corner.
+- Sofa occupies 40-55% of the frame.`,
+    perspective: `VIEW: Localized corner photograph with sofa centered. Camera frames a section of the room around the sofa, NOT the entire room layout. This is a real estate-style corner shot, not a panorama.`
   },
   medium: {
-    guidance: `=== CAMERA: MID-RANGE VIEW (中近景 — 空间关系核心) ===
-- Sofa occupies 45-65% of the frame, centered as dominant subject.
-- Camera at 2-3m distance, 1.2-1.4m height, 15-20° side offset — creating visible parallax difference from wide view.
-- Background: tightly framed room section — partial wall, coffee table, rug. NOT the entire room.`,
-    perspective: `VIEW: Spatial relationship shot. Sofa dominates while showing its immediate room context. MUST crop far-end room elements visible in the wide view — this is NOT a cropped wide view, it is a genuine camera displacement.`
+    guidance: `=== CAMERA: PRODUCT-DOMINANT MID-VIEW (中近景 — 沙发主体特写) ===
+- Sofa occupies 60-75% of the frame, perfectly CENTERED as the dominant subject.
+- Camera at 2m distance, 1.2m height, slight 15° side offset for visible parallax.
+- Background: tightly cropped — only the sofa's immediate surface context (edge of coffee table, sliver of rug). Far-end room elements MUST be cropped out.
+- This MUST look fundamentally different from the wide view — closer camera, tighter framing, sofa visibly larger.`,
+    perspective: `VIEW: Product-dominant shot. Sofa fills most of the frame. Only immediate surface-level room context visible. MUST NOT look like a zoomed-in version of the wide view — it must represent genuine camera displacement with tighter framing.`
   },
   close: {
     guidance: `=== CAMERA: MACRO CLOSE-UP (近景特写 — 产品材质核心) ===
