@@ -6,7 +6,11 @@ import {
 import type { PlacementSettings, SceneAnalysis } from "../types";
 
 /** Build human model prompt section. */
-function buildHumanModelPrompt(settings: PlacementSettings): string {
+function buildHumanModelPrompt(settings: PlacementSettings, perspective: string): string {
+  if (perspective === "close") {
+    return `5. PERSONA / HUMAN PRESENCE: DO NOT include any person or human body part in this close-up product view. 近景产品特写禁止出现人物或人体局部。`;
+  }
+
   if (!settings.addHumanModel) {
     return `5. PERSONA / HUMAN PRESENCE: DO NOT include any human figures, models, or body-shaped decorations. 绝对不要出现人物。`;
   }
@@ -74,11 +78,12 @@ const CAMERA_INSTRUCTIONS: Record<string, { guidance: string; perspective: strin
     perspective: `VIEW: Product-dominant shot. Sofa fills most of the frame. Only immediate surface-level room context visible. MUST NOT look like a zoomed-in version of the wide view — it must represent genuine camera displacement with tighter framing.`
   },
   close: {
-    guidance: `=== CAMERA: MACRO CLOSE-UP (近景特写 — 产品材质核心) ===
-- Sofa occupies 75-85% of the frame — this is a PRODUCT DETAIL photograph, NOT a spatial photograph. 这是一张产品材质特写，不是空间摄影。
-- Camera at 0.8-1.2m distance, armrest height — focusing only on surface details that are actually visible in IMAGE 2.
-- Only a small sliver of floor/wall visible as environmental context. The sofa must NOT look like a cutout paste-up.`,
-    perspective: `VIEW: Product detail macro shot showing the exact visible material and construction details from IMAGE 2. This is fundamentally different from the wide/medium views — it is a close-up product photograph, not a cropped spatial view.`
+    guidance: `=== CAMERA: EXTREME LOCAL PRODUCT CLOSE-UP (近景 — 沙发局部特写) ===
+- Move the camera physically close to the sofa at 0.6-1.0m distance. This must be a newly generated close camera position, not a crop or digital zoom of another view.
+- Show ONLY one representative local area automatically selected from IMAGE 2, such as an armrest, fabric surface, cushion edge, backrest detail, or module connection.
+- Do NOT show the complete sofa. Most of the sofa must extend naturally beyond the frame. 只展示沙发局部，完整沙发不需要入镜。
+- The visible sofa detail occupies 75-90% of the frame. Keep only minimal room context in the background.`,
+    perspective: `VIEW: Genuine close-range product detail photograph of one selected sofa area. Preserve the visible local shape, material, color, and construction exactly as shown in IMAGE 2; do not reconstruct or summarize the complete sofa.`
   }
 };
 
@@ -105,9 +110,9 @@ Advice: ${analysis.placementAdvice}`,
     camera.guidance,
     camera.perspective,
     perspective === "close"
-      ? `6. FOCUS & DEPTH OF FIELD (对焦与视觉质感): FOR CLOSE-UP VIEW (近景特写): Keep only the product details actually visible in IMAGE 2 crisp and sharp in the foreground, with the partial room background softly rendered behind them. Do not invent stitching, trim, texture, or construction details. 近景只清晰展示原产品图中真实存在的细节，严禁补造。`
+      ? `6. FOCUS & DEPTH OF FIELD (对焦与视觉质感): Use natural shallow depth of field. Keep the selected local product detail crisp and sharp while the remaining sofa and minimal room background fall naturally out of focus. Do not invent stitching, trim, texture, or construction details. 近景焦点局部锐利，其余自然虚化，严禁补造细节。`
       : `6. FOCUS & DEPTH OF FIELD (对焦与视觉质感): You MUST keep the ENTIRE photograph (sofa, background wall, adjacent furniture, floor) completely sharp and clear in deep focus. DO NOT apply unnatural bokeh blur. 全景深清晰对焦，不要虚化背景。`,
-    buildHumanModelPrompt(settings),
+    buildHumanModelPrompt(settings, perspective),
     settings.notes
       ? `=== USER REQUIREMENTS (仅在不影响产品一致性时执行) ===\n${settings.notes}`
       : "",
@@ -144,9 +149,9 @@ Your task is to generate a virtual room and place the target sofa into it.`,
     camera.guidance,
     camera.perspective,
     perspective === "close"
-      ? `6. FOCUS: Sharp focus on sofa texture and material in foreground. 近景锐利对焦。`
+      ? `6. FOCUS: Natural shallow depth of field with the selected local sofa detail sharp and the remaining sofa and room softly out of focus. 近景局部锐利，其余自然虚化。`
       : `6. FOCUS: Entire photograph in deep focus. 全景深清晰对焦。`,
-    buildHumanModelPrompt(settings),
+    buildHumanModelPrompt(settings, perspective),
     `=== PLACEMENT ===
 ${analysis.placementAdvice}`,
     settings.notes
