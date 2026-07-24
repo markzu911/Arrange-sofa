@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { GoogleGenAI, type Part } from "@google/genai";
 
 const SAAS_ORIGIN = process.env.SAAS_API_ORIGIN || "http://aibigtree.com";
 const BODY_LIMIT = 20 * 1024 * 1024;
@@ -17,14 +18,6 @@ class GeminiUpstreamError extends Error {
 
 interface JsonRequest extends IncomingMessage {
   body?: unknown;
-}
-
-interface GeminiPart {
-  text?: string;
-  inlineData?: {
-    mimeType: string;
-    data: string;
-  };
 }
 
 interface GeminiRequestBody {
@@ -116,30 +109,69 @@ async function handleGemini(req: JsonRequest, res: ServerResponse) {
     return;
   }
 
+  const client = new GoogleGenAI({ apiKey });
   const model = mapModel(body.model, body.mode);
 
-  // For analyze/quality/cutout/erase modes, use generateContent API with
-  // interleaved labels so Gemini can distinguish room vs sofa images.
-  const parts: GeminiPart[] = [];
+  if (body.mode === "generate") {
+    const images = await generateImagesWithSDK(client, body, model);
+    sendJson(res, 200, images.length ? { success: true, images } : createMockGeminiResponse(body));
+    return;
+  }
 
-  // Images + labels first, then prompt at end (same order as generate mode)
+  // For analyze/quality/cutout/erase modes — build interleaved parts and call generateContent via SDK
+  const parts = buildInterleavedParts(body);
+
+  if (body.mode === "analyze") {
+    const result = await callGenerateContent(client, model, parts, { temperature: 0.2, responseMimeType: "application/json" });
+    sendJson(res, 200, { success: true, analysis: parseAnalysis(result) });
+    return;
+  }
+
+  if (body.mode === "quality") {
+    const result = await callGenerateContent(client, model, parts, { temperature: 0.2, responseMimeType: "application/json" });
+    sendJson(res, 200, { success: true, quality: parseQuality(result) });
+    return;
+  }
+
+  if (body.mode === "cutout" || body.mode === "erase") {
+    const result = await generateImageWithFallback(client, body, model, "wide");
+    if (!result) throw new Error(body.mode === "erase" ? "Gemini 未返回可用的干净场景图" : "Gemini 未返回可用的沙发前景图");
+    sendJson(res, 200, {
+      success: true,
+      images: [{ perspective: "wide", title: body.mode === "erase" ? "干净场景" : "沙发前景", imageUrl: `data:${result.mimeType};base64,${result.data}` }]
+    });
+    return;
+  }
+
+  sendJson(res, 200, { success: false, message: "未知操作模式" });
+}
+
+/** Build interleaved parts for analyze/quality/cutout/erase — all images get explicit role labels. */
+function buildInterleavedParts(body: GeminiRequestBody): Part[] {
+  const parts: Part[] = [];
+
   if (body.roomImage?.base64) {
     parts.push({ text: "IMAGE 1 [REFERENCE ROOM ENVIRONMENT]:" });
     parts.push({ inlineData: { mimeType: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 } });
   }
 
-  for (const image of body.roomReferenceImages || []) {
-    if (image.base64) {
-      parts.push({ inlineData: { mimeType: image.mimeType || "image/jpeg", data: image.base64 } });
+  // P1 fix: room reference images now get explicit labels
+  const refs = body.roomReferenceImages || [];
+  if (refs.length > 0) {
+    parts.push({ text: `IMAGE 1 SUPPLEMENTARY — ${refs.length} additional room angle(s) from the same space:` });
+    for (const image of refs) {
+      if (image.base64) {
+        parts.push({ inlineData: { mimeType: image.mimeType || "image/jpeg", data: image.base64 } });
+      }
     }
   }
 
   if (body.sofaImage?.base64) {
-    parts.push({ text: "IMAGE 2 [REFERENCE SOFA PRODUCT]:" });
+    parts.push({ text: "IMAGE 2 [EXACT REFERENCE SOFA PRODUCT — THIS IS THE PRODUCT TO IDENTIFY AND REPLICATE]:" });
     parts.push({ inlineData: { mimeType: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 } });
   }
 
-  if (body.productReferenceImage?.base64) {
+  if (body.productReferenceImage?.base64 && body.productReferenceImage.base64 !== body.sofaImage?.base64) {
     parts.push({ text: "IMAGE 3 [PRODUCT IDENTITY REFERENCE]:" });
     parts.push({ inlineData: { mimeType: body.productReferenceImage.mimeType || "image/jpeg", data: body.productReferenceImage.base64 } });
   }
@@ -149,77 +181,81 @@ async function handleGemini(req: JsonRequest, res: ServerResponse) {
     parts.push({ inlineData: { mimeType: body.resultImage.mimeType || "image/jpeg", data: body.resultImage.base64 } });
   }
 
-  // Prompt at the end
+  // Prompt at the end — following floor lamp project's approach
   parts.push({ text: body.systemPrompt || "" });
 
-  if (body.mode === "generate") {
-    const images = await generateImagesWithInteractions(body, apiKey, model);
-    sendJson(res, 200, images.length ? { success: true, images } : createMockGeminiResponse(body));
-    return;
-  }
-
-  if (body.mode === "cutout" || body.mode === "erase") {
-    const { response, raw } = await requestImageWithFallback(body, apiKey, model, "wide");
-    if (!response.ok) throw toGeminiUpstreamError(response.status, raw, body.mode === "erase" ? "原场景清场失败" : "沙发前景提取失败");
-    const image = extractInteractionImage(JSON.parse(raw));
-    if (!image) throw new Error(body.mode === "erase" ? "Gemini 未返回可用的干净场景图" : "Gemini 未返回可用的沙发前景图");
-    sendJson(res, 200, { success: true, images: [{ perspective: "wide", title: body.mode === "erase" ? "干净场景" : "沙发前景", imageUrl: `data:${image.mimeType};base64,${image.data}` }] });
-    return;
-  }
-
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ role: "user", parts }],
-        generationConfig: { temperature: 0.2, responseMimeType: "application/json" }
-      })
-    }
-  );
-
-  const raw = await response.text();
-  if (!response.ok) {
-    sendJson(res, response.status, {
-      success: false,
-      message: parseGeminiError(raw) || "Gemini 请求失败"
-    });
-    return;
-  }
-
-  const data = JSON.parse(raw);
-  if (body.mode === "analyze") {
-    sendJson(res, 200, {
-      success: true,
-      analysis: parseAnalysis(data)
-    });
-    return;
-  }
-
-  if (body.mode === "quality") {
-    sendJson(res, 200, { success: true, quality: parseQuality(data) });
-    return;
-  }
-
-  sendJson(res, 200, parseGeneratedImages(data, body));
+  return parts;
 }
 
-async function generateImagesWithInteractions(body: GeminiRequestBody, apiKey: string, model: string) {
+/** Build interleaved parts for image generation — images+labels first, prompt last. */
+function buildGenerationParts(body: GeminiRequestBody): Part[] {
+  const parts: Part[] = [];
+
+  if (body.roomImage?.base64) {
+    parts.push({ text: "IMAGE 1 [REFERENCE ROOM ENVIRONMENT]:" });
+    parts.push({ inlineData: { mimeType: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 } });
+  }
+
+  const refs = body.roomReferenceImages || [];
+  if (refs.length > 0) {
+    parts.push({ text: `IMAGE 1 SUPPLEMENTARY — ${refs.length} additional room angle(s):` });
+    for (const image of refs) {
+      if (image.base64) {
+        parts.push({ inlineData: { mimeType: image.mimeType || "image/jpeg", data: image.base64 } });
+      }
+    }
+  }
+
+  if (body.sofaImage?.base64) {
+    parts.push({ text: "IMAGE 2 [EXACT REFERENCE SOFA PRODUCT — 必须100%按此图还原沙发]:" });
+    parts.push({ inlineData: { mimeType: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 } });
+  }
+
+  if (body.productReferenceImage?.base64 && body.productReferenceImage.base64 !== body.sofaImage?.base64) {
+    parts.push({ text: "IMAGE 3 [PRODUCT IDENTITY REFERENCE]:" });
+    parts.push({ inlineData: { mimeType: body.productReferenceImage.mimeType || "image/jpeg", data: body.productReferenceImage.base64 } });
+  }
+
+  // Prompt LAST — critical for Gemini's sequential processing
+  parts.push({ text: body.systemPrompt || "" });
+
+  return parts;
+}
+
+/** Call generateContent via @google/genai SDK for text/JSON responses (analyze/quality). */
+async function callGenerateContent(
+  client: GoogleGenAI,
+  model: string,
+  parts: Part[],
+  config: { temperature?: number; responseMimeType?: string }
+): Promise<unknown> {
+  const response = await client.models.generateContent({
+    model,
+    contents: [{ role: "user", parts }],
+    config: {
+      temperature: config.temperature ?? 0.2,
+      responseMimeType: config.responseMimeType ?? "text/plain"
+    }
+  });
+
+  if (!response.candidates?.[0]?.content?.parts) {
+    throw new GeminiUpstreamError(500, "Gemini 返回了空响应");
+  }
+
+  return response;
+}
+
+/** Generate images using @google/genai SDK with generateContent as primary, Interactions as fallback. */
+async function generateImagesWithSDK(client: GoogleGenAI, body: GeminiRequestBody, model: string) {
   const requested = body.settings?.perspectives?.length ? body.settings.perspectives : ["medium"];
 
-  // Each perspective is generated independently — following the floor lamp project's approach.
-  // No master+variation dependency. Each perspective gets its own Gemini call.
   const results = await Promise.all(requested.map(async (perspective) => {
     const perspectiveBody: GeminiRequestBody = {
       ...body,
       settings: { ...body.settings, perspectives: [perspective] }
     };
-    const { response, raw } = await requestImageWithFallback(perspectiveBody, apiKey, model, perspective);
-    if (!response.ok) throw toGeminiUpstreamError(response.status, raw, "Gemini 图片生成失败");
 
-    const data = JSON.parse(raw);
-    const image = extractInteractionImage(data) || extractGeneratedContentImage(data);
+    const image = await generateImageWithFallback(client, perspectiveBody, model, perspective);
     if (!image) throw new Error(`Gemini 未返回可用的${perspective}视角图片`);
 
     const title = perspective === "wide" ? "远景（房间全景）" : perspective === "medium" ? "中近景（沙发主体）" : "近景（产品细节）";
@@ -229,228 +265,186 @@ async function generateImagesWithInteractions(body: GeminiRequestBody, apiKey: s
   return results;
 }
 
-async function requestImageWithFallback(body: GeminiRequestBody, apiKey: string, model: string, perspective: string) {
-  // Following the floor lamp project: use generateContent API as PRIMARY path.
-  // The floor lamp project uses client.models.generateContent() — this is the stable,
-  // well-supported API that properly handles interleaved text+image parts.
-  // Interactions API is experimental and may not process text labels between images
-  // with the same weight as generateContent.
-  let primary: { response: Response; raw: string } | undefined;
+/** Try generateContent (SDK) first, then Interactions API as fallback. */
+async function generateImageWithFallback(
+  client: GoogleGenAI,
+  body: GeminiRequestBody,
+  model: string,
+  perspective: string
+): Promise<{ mimeType: string; data: string } | null> {
+  // PRIMARY: generateContent via SDK
   try {
-    const response = await requestImageGenerateContent(body, apiKey, model, perspective);
-    primary = { response, raw: await response.text() };
-    if (primary.response.ok) {
-      return { ...primary, model, api: "generateContent" };
-    }
-    if (shouldTryInteractions(primary.response.status, primary.raw)) {
-      const fallbackResponse = await requestImageInteraction(body, apiKey, model, perspective);
-      const fallbackRaw = await fallbackResponse.text();
-      if (fallbackResponse.ok) return { response: fallbackResponse, raw: fallbackRaw, model, api: "interactions" };
-    }
-    if (!isHighDemand(primary.response.status, primary.raw) || !model.includes("pro-image")) {
-      return { ...primary, model, api: "generateContent" };
-    }
-  } catch (error) {
-    if (!model.includes("pro-image") || !isRequestTimeout(error)) throw error;
-  }
-
-  const fallbackModel = process.env.GEMINI_IMAGE_MODEL_FALLBACK || process.env.GEMINI_IMAGE_MODEL || "gemini-2.5-flash-image";
-  if (fallbackModel === model) {
-    if (primary) return { ...primary, model, api: "generateContent" };
-    throw new ImageGenerationUnavailable();
-  }
-
-  try {
-    const response = await requestImageGenerateContent(body, apiKey, fallbackModel, perspective);
-    const raw = await response.text();
-    if (!response.ok && shouldTryInteractions(response.status, raw)) {
-      const fallbackResponse = await requestImageInteraction(body, apiKey, fallbackModel, perspective);
-      const fallbackRaw = await fallbackResponse.text();
-      if (fallbackResponse.ok) return { response: fallbackResponse, raw: fallbackRaw, model: fallbackModel, api: "interactions" };
-    }
-    if (!response.ok && isHighDemand(response.status, raw)) throw new ImageGenerationUnavailable();
-    return { response, raw, model: fallbackModel, api: "generateContent" };
-  } catch (error) {
-    if (error instanceof ImageGenerationUnavailable) throw error;
-    if (isRequestTimeout(error)) throw new ImageGenerationUnavailable();
-    throw error;
-  }
-}
-
-function shouldTryInteractions(status: number, raw: string) {
-  // If generateContent fails due to model/image not supported, try Interactions API as fallback
-  return status === 400 && /not available in your current location|available-regions|not supported|unsupported|not found/i.test(raw);
-}
-
-function requestImageGenerateContent(body: GeminiRequestBody, apiKey: string, model: string, perspective: string) {
-  const prompt = body.systemPrompt || "";
-  const parts: GeminiPart[] = [];
-
-  // Following the floor lamp project: images + labels FIRST, prompt LAST.
-  // This ensures Gemini establishes visual context before reading instructions.
-  if (body.roomImage?.base64) {
-    parts.push({ text: "IMAGE 1 [REFERENCE ROOM ENVIRONMENT]:" });
-    parts.push({ inlineData: { mimeType: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 } });
-  }
-  for (const image of body.roomReferenceImages || []) {
-    if (image.base64) parts.push({ inlineData: { mimeType: image.mimeType || "image/jpeg", data: image.base64 } });
-  }
-  if (body.sofaImage?.base64) {
-    parts.push({ text: "IMAGE 2 [EXACT REFERENCE SOFA PRODUCT IMAGE TO REPLICATE - 必须100%按此图还原沙发]:" });
-    parts.push({ inlineData: { mimeType: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 } });
-  }
-  if (body.productReferenceImage?.base64 && body.productReferenceImage.base64 !== body.sofaImage?.base64) {
-    parts.push({ text: "IMAGE 3 [PRODUCT IDENTITY REFERENCE]:" });
-    parts.push({ inlineData: { mimeType: body.productReferenceImage.mimeType || "image/jpeg", data: body.productReferenceImage.base64 } });
-  }
-
-  // Prompt comes at the END — same order as floor lamp project
-  parts.push({ text: prompt });
-  return fetchWithDiagnostics(`generateContent:${model}:${perspective}`, `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${apiKey}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
+    const parts = buildGenerationParts(body);
+    const response = await client.models.generateContent({
+      model,
       contents: [{ role: "user", parts }],
-      generationConfig: {
+      config: {
         responseModalities: ["Image"],
-        // Gemini generateContent uses imageConfig (not responseFormat.image) for aspect ratio / size.
-        imageConfig: {
-          aspectRatio: body.settings?.ratio || "16:9",
-          ...(model.includes("3") ? { imageSize: body.settings?.clarity || "1K" } : {})
-        }
+        ...(body.settings?.ratio ? { aspectRatio: body.settings.ratio } : {})
       }
-    })
-  });
+    });
+
+    const image = extractSDKImage(response);
+    if (image) return image;
+  } catch (error) {
+    console.warn("[api/proxy] generateContent SDK failed", { model, perspective, ...describeError(error) });
+  }
+
+  // FALLBACK 1: try Interactions API (raw fetch — SDK doesn't support Interactions)
+  try {
+    const interactionResult = await requestImageInteractionRaw(body, model, perspective);
+    if (interactionResult) return interactionResult;
+  } catch (error) {
+    console.warn("[api/proxy] Interactions fallback failed", { model, perspective, ...describeError(error) });
+  }
+
+  // FALLBACK 2: try different model via SDK
+  const fallbackModel = process.env.GEMINI_IMAGE_MODEL_FALLBACK || "gemini-2.5-flash-image";
+  if (fallbackModel !== model) {
+    try {
+      const parts = buildGenerationParts(body);
+      const response = await client.models.generateContent({
+        model: fallbackModel,
+        contents: [{ role: "user", parts }],
+        config: {
+          responseModalities: ["Image"],
+          ...(body.settings?.ratio ? { aspectRatio: body.settings.ratio } : {})
+        }
+      });
+
+      const image = extractSDKImage(response);
+      if (image) return image;
+    } catch (error) {
+      console.warn("[api/proxy] fallback model failed", { fallbackModel, perspective, ...describeError(error) });
+    }
+  }
+
+  throw new ImageGenerationUnavailable();
 }
 
-function requestImageInteraction(body: GeminiRequestBody, apiKey: string, model: string, perspective: string) {
+/** Extract image from SDK generateContent response. */
+function extractSDKImage(response: unknown): { mimeType: string; data: string } | null {
+  const resp = response as { candidates?: Array<{ content?: { parts?: Array<Part> } }> };
+  const parts = resp.candidates?.[0]?.content?.parts;
+  if (!parts) return null;
+
+  for (const part of parts) {
+    if (part.inlineData?.data) {
+      return {
+        mimeType: part.inlineData.mimeType || "image/png",
+        data: part.inlineData.data
+      };
+    }
+  }
+  return null;
+}
+
+/** Interactions API fallback — raw fetch since @google/genai SDK doesn't support it. */
+async function requestImageInteractionRaw(
+  body: GeminiRequestBody,
+  model: string,
+  perspective: string
+): Promise<{ mimeType: string; data: string } | null> {
+  const apiKey = process.env.GEMINI_API_KEY!;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 75_000);
-  const isAssetEdit = body.mode === "cutout" || body.mode === "erase";
-  const prompt = body.systemPrompt || "";
 
-  // Following the floor lamp project's approach: interleaved text labels + images.
-  // Each image gets a clear role label so Gemini knows which is room vs product.
-  const input = isAssetEdit
-    ? [
-        { type: "text", text: prompt },
-          ...(body.mode === "erase" && body.roomImage?.base64
-            ? [{ type: "image", mime_type: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 }]
-            : body.sofaImage?.base64
-              ? [{ type: "image", mime_type: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 }]
-              : [])
-      ]
-    : buildInterleavedInput(prompt, body);
-  return fetchWithDiagnostics(`interactions:${model}:${perspective}:independent`, "https://generativelanguage.googleapis.com/v1beta/interactions", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-    signal: controller.signal,
-    body: JSON.stringify({
-      model,
-      input,
-      response_format: {
-        type: "image",
-        mime_type: "image/jpeg",
-        aspect_ratio: body.settings?.ratio || "16:9",
-        image_size: body.settings?.clarity || "1K"
-      }
-    })
-  }).finally(() => clearTimeout(timeout));
+  const input = buildInterleavedInteractionInput(body);
+
+  try {
+    const response = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model,
+        input,
+        response_format: {
+          type: "image",
+          mime_type: "image/jpeg",
+          aspect_ratio: body.settings?.ratio || "16:9"
+        }
+      })
+    });
+
+    const raw = await response.text();
+    if (!response.ok) return null;
+
+    const data = JSON.parse(raw);
+    return extractInteractionImage(data);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
-/** Build interleaved input parts following the floor lamp project's approach.
- *  CRITICAL: Images + labels come FIRST, prompt comes LAST.
- *  Gemini processes multimodal input sequentially — seeing images first establishes
- *  visual context, then the detailed prompt at the end tells it how to process them.
- *  This order ensures camera perspective instructions (wide/medium/close) are read
- *  AFTER Gemini has already "seen" both images, preventing perspective instructions
- *  from being diluted or ignored. */
-function buildInterleavedInput(prompt: string, body: GeminiRequestBody) {
+function buildInterleavedInteractionInput(body: GeminiRequestBody) {
   const parts: Array<{ type: string; text?: string; mime_type?: string; data?: string }> = [];
 
-  // IMAGE 1: Room environment — comes FIRST
   if (body.roomImage?.base64) {
     parts.push({ type: "text", text: "IMAGE 1 [REFERENCE ROOM ENVIRONMENT]:" });
     parts.push({ type: "image", mime_type: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 });
   }
 
-  // Additional room reference images
-  for (const image of body.roomReferenceImages || []) {
-    if (image.base64) {
-      parts.push({ type: "image", mime_type: image.mimeType || "image/jpeg", data: image.base64 });
+  const refs = body.roomReferenceImages || [];
+  if (refs.length > 0) {
+    parts.push({ type: "text", text: `IMAGE 1 SUPPLEMENTARY — ${refs.length} additional room angle(s):` });
+    for (const image of refs) {
+      if (image.base64) parts.push({ type: "image", mime_type: image.mimeType || "image/jpeg", data: image.base64 });
     }
   }
 
-  // IMAGE 2: Sofa product — the exact reference that MUST be replicated 100%
   if (body.sofaImage?.base64) {
-    parts.push({ type: "text", text: "IMAGE 2 [EXACT REFERENCE SOFA PRODUCT IMAGE TO REPLICATE - 必须100%按此图还原沙发]:" });
+    parts.push({ type: "text", text: "IMAGE 2 [EXACT REFERENCE SOFA PRODUCT — 必须100%按此图还原沙发]:" });
     parts.push({ type: "image", mime_type: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 });
   }
 
-  // IMAGE 3: Product reference (if different from sofa image)
   if (body.productReferenceImage?.base64 && body.productReferenceImage.base64 !== body.sofaImage?.base64) {
-    parts.push({ type: "text", text: "IMAGE 3 [PRODUCT IDENTITY REFERENCE - 产品身份唯一依据]:" });
+    parts.push({ type: "text", text: "IMAGE 3 [PRODUCT IDENTITY REFERENCE]:" });
     parts.push({ type: "image", mime_type: body.productReferenceImage.mimeType || "image/jpeg", data: body.productReferenceImage.base64 });
   }
 
-  // The full prompt comes LAST — this is the key difference from our previous implementation.
-  // Following the floor lamp project's approach exactly.
-  parts.push({ type: "text", text: prompt });
-
+  parts.push({ type: "text", text: body.systemPrompt || "" });
   return parts;
 }
 
-async function fetchWithDiagnostics(label: string, url: string, init: RequestInit) {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    try {
-      return await fetch(url, init);
-    } catch (error) {
-      lastError = error;
-      console.error("[api/proxy] upstream fetch failed", {
-        label,
-        attempt,
-        willRetry: attempt < 3 && isRetryableFetchError(error),
-        ...describeError(error)
-      });
-      if (attempt >= 3 || !isRetryableFetchError(error)) throw error;
-      await sleep(700 * attempt);
+function extractInteractionImage(data: unknown): { mimeType: string; data: string } | null {
+  const record = asRecord(data);
+  const outputImage = asRecord(record.output_image);
+  if (typeof outputImage.data === "string") {
+    return {
+      mimeType: typeof outputImage.mime_type === "string" ? outputImage.mime_type : "image/png",
+      data: outputImage.data
+    };
+  }
+
+  const steps = Array.isArray(record.steps) ? record.steps : [];
+  for (const step of steps) {
+    const image = asRecord(asRecord(step).output_image);
+    if (typeof image.data === "string") {
+      return {
+        mimeType: typeof image.mime_type === "string" ? image.mime_type : "image/png",
+        data: image.data
+      };
+    }
+
+    const content = asRecord(step).content;
+    if (Array.isArray(content)) {
+      for (const item of content) {
+        const contentItem = asRecord(item);
+        if (typeof contentItem.data === "string" && String(contentItem.mime_type || "").startsWith("image/")) {
+          return {
+            mimeType: typeof contentItem.mime_type === "string" ? contentItem.mime_type : "image/png",
+            data: contentItem.data
+          };
+        }
+      }
     }
   }
-  throw lastError;
-}
 
-function isRetryableFetchError(error: unknown) {
-  if (!(error instanceof Error)) return false;
-  const cause = (error as Error & { cause?: Record<string, unknown> }).cause;
-  const causeText = String(cause?.code || cause?.name || cause?.message || "");
-  return /fetch failed|network|socket|terminated|timeout|aborted/i.test(error.message)
-    || /ECONNRESET|ETIMEDOUT|UND_ERR_SOCKET|UND_ERR_CONNECT_TIMEOUT|EAI_AGAIN|ENETUNREACH|ECONNREFUSED/i.test(causeText);
+  return null;
 }
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function isHighDemand(status: number, raw: string): boolean {
-  return status === 429 || status === 503 || /high demand|try again later|resource exhausted/i.test(raw);
-}
-
-function isRequestTimeout(error: unknown): boolean {
-  return error instanceof Error && (error.name === "AbortError" || /aborted|timeout/i.test(error.message));
-}
-
-function toGeminiUpstreamError(statusCode: number, raw: string, fallbackMessage: string): GeminiUpstreamError {
-  const upstreamMessage = parseGeminiError(raw) || fallbackMessage;
-  if (/denied access|permission|api key|unauthenticated|forbidden/i.test(upstreamMessage) || statusCode === 401 || statusCode === 403) {
-    return new GeminiUpstreamError(statusCode, "Gemini API Key 或当前项目权限不可用，请检查 API Key 所属项目及 Gemini API 访问权限。");
-  }
-  if (statusCode === 404 || /not found|not supported|model.*not/i.test(upstreamMessage)) {
-    return new GeminiUpstreamError(statusCode, "当前 Gemini 图片模型不可用或不支持此接口，请检查模型配置。");
-  }
-  return new GeminiUpstreamError(statusCode, upstreamMessage);
-}
-
 
 async function proxyToSaas(req: JsonRequest, res: ServerResponse, path: string) {
   const target = `${SAAS_ORIGIN}${path}${getQuery(req)}`;
@@ -539,6 +533,7 @@ function parseAnalysis(data: unknown) {
     return {
       roomSummary: toReadableText(parsed.roomSummary, "已识别房间空间与地面关系。"),
       sofaSummary: toReadableText(parsed.sofaSummary, "已识别沙发主体、材质和外观。"),
+      sofaIdentity: normalizeSofaIdentity(parsed.sofaIdentity, parsed.sofaSummary),
       lighting: toReadableText(parsed.lighting, "已判断主要光线方向。"),
       perspective: toReadableText(parsed.perspective, "已判断房间透视。"),
       placementAdvice: toReadableText(parsed.placementAdvice, "建议按空间动线自然摆放。"),
@@ -549,6 +544,7 @@ function parseAnalysis(data: unknown) {
     return {
       roomSummary: text || "已识别房间空间与地面关系。",
       sofaSummary: "已识别沙发主体、材质和外观。",
+      sofaIdentity: normalizeSofaIdentity(null, null),
       lighting: "已判断主要光线方向。",
       perspective: "已判断房间透视。",
       placementAdvice: "建议按空间动线自然摆放。",
@@ -556,6 +552,21 @@ function parseAnalysis(data: unknown) {
       placementPlan: parsePlacementPlan(null, "根据空间动线自然摆放目标沙发。")
     };
   }
+}
+
+function normalizeSofaIdentity(value: unknown, fallback: unknown) {
+  const source = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const summary = toReadableText(fallback, "目标沙发参考图中的产品主体");
+  return {
+    seatCount: toReadableText(source.seatCount, "以参考图为准"),
+    silhouette: toReadableText(source.silhouette, summary),
+    armrest: toReadableText(source.armrest, "以参考图为准"),
+    backrest: toReadableText(source.backrest, "以参考图为准"),
+    cushions: toReadableText(source.cushions, "以参考图为准"),
+    material: toReadableText(source.material, "以参考图为准"),
+    color: toReadableText(source.color, "以参考图为准"),
+    details: toReadableList(source.details, ["以参考图可见细节为准"])
+  };
 }
 
 function parsePlacementPlan(value: unknown, fallbackAdvice: unknown) {
@@ -613,110 +624,13 @@ function parseQuality(data: unknown) {
   }
 }
 
-/** Gemini 偶尔会把文本字段包装成数组或对象，统一转换为可展示的中文文本。 */
-function toReadableText(value: unknown, fallback: string): string {
-  if (typeof value === "string") return value.trim() || fallback;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  if (Array.isArray(value)) {
-    const text = value.map((item) => toReadableText(item, "")).filter(Boolean).join("；");
-    return text || fallback;
-  }
-  if (value && typeof value === "object") {
-    const text = Object.values(value as Record<string, unknown>)
-      .map((item) => toReadableText(item, ""))
-      .filter(Boolean)
-      .join("；");
-    return text || fallback;
-  }
-  return fallback;
-}
-
-function toReadableList(value: unknown, fallback: string[]): string[] {
-  const items = Array.isArray(value) ? value : value == null ? [] : [value];
-  const normalized = items.map((item) => toReadableText(item, "")).filter(Boolean);
-  return normalized.length ? normalized : fallback;
-}
-
-function parseGeneratedImages(data: unknown, body: GeminiRequestBody) {
-  const candidates = asRecord(data).candidates as unknown[];
-  const parts = asRecord(asRecord(candidates?.[0]).content).parts as unknown[];
-  const images = (parts || [])
-    .map((part) => asRecord(part).inlineData as { mimeType?: string; data?: string } | undefined)
-    .filter((part): part is { mimeType?: string; data: string } => Boolean(part?.data))
-    .map((part, index) => ({
-      perspective: body.settings?.perspectives?.[index] || "medium",
-      title: `试摆效果 ${index + 1}`,
-      imageUrl: `data:${part.mimeType || "image/png"};base64,${part.data}`
-    }));
-
-  if (images.length) {
-    return { success: true, images };
-  }
-
-  return createMockGeminiResponse(body);
-}
-
-function extractInteractionImage(data: unknown): { mimeType: string; data: string } | null {
-  const record = asRecord(data);
-  const outputImage = asRecord(record.output_image);
-  if (typeof outputImage.data === "string") {
-    return {
-      mimeType: typeof outputImage.mime_type === "string" ? outputImage.mime_type : "image/png",
-      data: outputImage.data
-    };
-  }
-
-  const steps = Array.isArray(record.steps) ? record.steps : [];
-  for (const step of steps) {
-    const image = asRecord(asRecord(step).output_image);
-    if (typeof image.data === "string") {
-      return {
-        mimeType: typeof image.mime_type === "string" ? image.mime_type : "image/png",
-        data: image.data
-      };
-    }
-
-    const content = asRecord(step).content;
-    if (Array.isArray(content)) {
-      for (const item of content) {
-        const contentItem = asRecord(item);
-        if (typeof contentItem.data === "string" && String(contentItem.mime_type || "").startsWith("image/")) {
-          return {
-            mimeType: typeof contentItem.mime_type === "string" ? contentItem.mime_type : "image/png",
-            data: contentItem.data
-          };
-        }
-      }
-    }
-  }
-
-  return null;
-}
-
-function extractGeneratedContentImage(data: unknown): { mimeType: string; data: string } | null {
-  const candidates = asRecord(data).candidates;
-  const firstCandidate = Array.isArray(candidates) ? asRecord(candidates[0]) : {};
-  const content = asRecord(firstCandidate.content);
-  const parts = Array.isArray(content.parts) ? content.parts : [];
-  for (const part of parts) {
-    const source = asRecord(part);
-    const image = asRecord(source.inlineData || source.inline_data);
-    if (typeof image.data === "string") {
-      return {
-        mimeType: typeof image.mimeType === "string" ? image.mimeType : typeof image.mime_type === "string" ? image.mime_type : "image/png",
-        data: image.data
-      };
-    }
-  }
-  return null;
-}
-
 function extractText(data: unknown): string {
-  const candidates = asRecord(data).candidates as unknown[];
-  const parts = asRecord(asRecord(candidates?.[0]).content).parts as unknown[];
-  return (parts || [])
-    .map((part) => asRecord(part).text)
-    .filter((text): text is string => typeof text === "string")
+  const resp = data as { candidates?: Array<{ content?: { parts?: Array<Part> } }> };
+  const parts = resp.candidates?.[0]?.content?.parts;
+  if (!parts) return "";
+  return parts
+    .map((part) => (part as { text?: string }).text || "")
+    .filter(Boolean)
     .join("\n")
     .trim();
 }
@@ -726,8 +640,9 @@ function mapModel(model?: string, mode?: string): string {
     return process.env.GEMINI_ANALYZE_MODEL || "gemini-2.5-flash";
   }
 
+  // P2 fix: default to lite model matching the floor lamp project
   if (model === "gemini-3") {
-    return process.env.GEMINI_IMAGE_MODEL_3 || process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-image";
+    return process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-lite-image";
   }
 
   return process.env.GEMINI_IMAGE_MODEL || "gemini-2.5-flash-image";
@@ -808,6 +723,29 @@ function parseGeminiError(raw: string): string {
     }
     return raw.slice(0, 200);
   }
+}
+
+function toReadableText(value: unknown, fallback: string): string {
+  if (typeof value === "string") return value.trim() || fallback;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) {
+    const text = value.map((item) => toReadableText(item, "")).filter(Boolean).join("；");
+    return text || fallback;
+  }
+  if (value && typeof value === "object") {
+    const text = Object.values(value as Record<string, unknown>)
+      .map((item) => toReadableText(item, ""))
+      .filter(Boolean)
+      .join("；");
+    return text || fallback;
+  }
+  return fallback;
+}
+
+function toReadableList(value: unknown, fallback: string[]): string[] {
+  const items = Array.isArray(value) ? value : value == null ? [] : [value];
+  const normalized = items.map((item) => toReadableText(item, "")).filter(Boolean);
+  return normalized.length ? normalized : fallback;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

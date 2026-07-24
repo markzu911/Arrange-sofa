@@ -115,6 +115,7 @@ async function handleGemini(req, res) {
 
   // Interleaved labels + images first, prompt at end (same approach as generate mode)
   const parts = [];
+  let refLabelAdded = false;
 
   if (body.roomImage?.base64) {
     parts.push({ text: "IMAGE 1 [REFERENCE ROOM ENVIRONMENT]:" });
@@ -122,11 +123,17 @@ async function handleGemini(req, res) {
   }
 
   for (const image of body.roomReferenceImages || []) {
-    if (image.base64) parts.push({ inlineData: { mimeType: image.mimeType || "image/jpeg", data: image.base64 } });
+    if (image.base64) {
+      if (!refLabelAdded) {
+        parts.push({ text: `IMAGE 1 SUPPLEMENTARY — ${body.roomReferenceImages.length} additional room angle(s) from the same space:` });
+        refLabelAdded = true;
+      }
+      parts.push({ inlineData: { mimeType: image.mimeType || "image/jpeg", data: image.base64 } });
+    }
   }
 
   if (body.sofaImage?.base64) {
-    parts.push({ text: "IMAGE 2 [REFERENCE SOFA PRODUCT]:" });
+    parts.push({ text: "IMAGE 2 [EXACT REFERENCE SOFA PRODUCT — THIS IS THE PRODUCT TO IDENTIFY AND REPLICATE]:" });
     parts.push({ inlineData: { mimeType: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 } });
   }
 
@@ -258,6 +265,7 @@ function shouldTryInteractions(status, raw) {
 function requestImageGenerateContent(body, apiKey, model, perspective) {
   const prompt = body.systemPrompt || "";
   const parts = [];
+  let refLabelAdded = false;
 
   // Following the floor lamp project: images + labels FIRST, prompt LAST.
   if (body.roomImage?.base64) {
@@ -265,10 +273,16 @@ function requestImageGenerateContent(body, apiKey, model, perspective) {
     parts.push({ inlineData: { mimeType: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 } });
   }
   for (const image of body.roomReferenceImages || []) {
-    if (image.base64) parts.push({ inlineData: { mimeType: image.mimeType || "image/jpeg", data: image.base64 } });
+    if (image.base64) {
+      if (!refLabelAdded) {
+        parts.push({ text: `IMAGE 1 SUPPLEMENTARY — ${body.roomReferenceImages.length} additional room angle(s):` });
+        refLabelAdded = true;
+      }
+      parts.push({ inlineData: { mimeType: image.mimeType || "image/jpeg", data: image.base64 } });
+    }
   }
   if (body.sofaImage?.base64) {
-    parts.push({ text: "IMAGE 2 [EXACT REFERENCE SOFA PRODUCT IMAGE TO REPLICATE - 必须100%按此图还原沙发]:" });
+    parts.push({ text: "IMAGE 2 [EXACT REFERENCE SOFA PRODUCT — 必须100%按此图还原沙发]:" });
     parts.push({ inlineData: { mimeType: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 } });
   }
   if (body.productReferenceImage?.base64 && body.productReferenceImage.base64 !== body.sofaImage?.base64) {
@@ -285,10 +299,9 @@ function requestImageGenerateContent(body, apiKey, model, perspective) {
       contents: [{ role: "user", parts }],
       generationConfig: {
         responseModalities: ["Image"],
-        // Gemini generateContent uses imageConfig (not responseFormat.image) for aspect ratio / size.
+        // Following floor lamp project: only aspectRatio, no imageSize
         imageConfig: {
-          aspectRatio: body.settings?.ratio || "16:9",
-          ...(String(model).includes("3") ? { imageSize: body.settings?.clarity || "1K" } : {})
+          aspectRatio: body.settings?.ratio || "16:9"
         }
       }
     })
@@ -329,23 +342,23 @@ function requestImageInteraction(body, apiKey, model, perspective) {
 
 function buildInterleavedInput(prompt, body) {
   const parts = [];
-
-  // CRITICAL: Images + labels come FIRST, prompt comes LAST.
-  // Following the floor lamp project's approach exactly.
-  // Gemini processes multimodal input sequentially — seeing images first
-  // establishes visual context, then the detailed prompt at the end tells
-  // it how to process them. This prevents perspective instructions from
-  // being diluted or ignored.
+  let refLabelAdded = false;
 
   if (body.roomImage?.base64) {
     parts.push({ type: "text", text: "IMAGE 1 [REFERENCE ROOM ENVIRONMENT]:" });
     parts.push({ type: "image", mime_type: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 });
   }
   for (const image of body.roomReferenceImages || []) {
-    if (image.base64) parts.push({ type: "image", mime_type: image.mimeType || "image/jpeg", data: image.base64 });
+    if (image.base64) {
+      if (!refLabelAdded) {
+        parts.push({ type: "text", text: `IMAGE 1 SUPPLEMENTARY — ${body.roomReferenceImages.length} additional room angle(s):` });
+        refLabelAdded = true;
+      }
+      parts.push({ type: "image", mime_type: image.mimeType || "image/jpeg", data: image.base64 });
+    }
   }
   if (body.sofaImage?.base64) {
-    parts.push({ type: "text", text: "IMAGE 2 [EXACT REFERENCE SOFA PRODUCT IMAGE TO REPLICATE - 必须100%按此图还原沙发]:" });
+    parts.push({ type: "text", text: "IMAGE 2 [EXACT REFERENCE SOFA PRODUCT — 必须100%按此图还原沙发]:" });
     parts.push({ type: "image", mime_type: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 });
   }
   if (body.productReferenceImage?.base64 && body.productReferenceImage.base64 !== body.sofaImage?.base64) {
@@ -353,7 +366,6 @@ function buildInterleavedInput(prompt, body) {
     parts.push({ type: "image", mime_type: body.productReferenceImage.mimeType || "image/jpeg", data: body.productReferenceImage.base64 });
   }
 
-  // Prompt comes at the END
   parts.push({ type: "text", text: prompt });
 
   return parts;
@@ -635,7 +647,7 @@ function mapModel(model, mode) {
   }
 
   if (model === "gemini-3") {
-    return process.env.GEMINI_IMAGE_MODEL_3 || process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-image";
+    return process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-lite-image";
   }
 
   return process.env.GEMINI_IMAGE_MODEL || "gemini-2.5-flash-image";

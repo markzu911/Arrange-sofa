@@ -36,18 +36,13 @@ export const virtualRoomStyleLabels: Record<VirtualRoomStyle, string> = {
   minimal: "极简黑白"
 };
 
-export const sofaPlacementSystemPrompt = `You are a professional high-end villa interior soft-furnishing visual design assistant. Your task is to naturally place the user's target sofa into the living room space and generate a professional interior design photograph.
+export const sofaPlacementSystemPrompt = `You are a professional interior design assistant. Your task is to naturally place the target sofa into the room and generate a photorealistic interior photograph.
 
-CORE REQUIREMENTS:
-1. The target sofa MUST be an EXACT 1:1 visual replica of the uploaded product reference image in every dimension: silhouette, seat count, armrest shape, backrest height, cushion partition, main color, material texture, and visible decorative details.
-2. The sofa must be naturally integrated into the room with correct perspective, scale, ground contact, lighting, shadows, reflections, and ambient color.
-3. Preserve the room's main structure and key furniture relationships. Do not add irrelevant text, watermarks, or exaggerated decoration.
-4. Prioritize user notes and confirmed placement plans. When no explicit position is given, choose the most natural and reasonable location yourself.
-
-HIGHEST PRIORITY CONSTRAINT:
-- CRITICAL DIRECT VISUAL REPLICATION (最核心约束 - 必须和用户上传的沙发产品参考图完全一致):
-  The generated sofa MUST BE AN EXACT visual replica of the reference product image. Any visual deviation from the reference image is a critical failure!
-  If there is any discrepancy between text descriptions and the reference image, THE REFERENCE IMAGE IS THE ABSOLUTE TRUTH AND MUST BE REPLICATED EXACTLY.`;
+RULES:
+1. The generated sofa MUST exactly match the reference product image — this is the single most important constraint.
+2. The sofa must be naturally integrated with correct perspective, scale, ground contact, shadows, and ambient lighting.
+3. Preserve the room's main architecture and existing furniture. Do not add unrequested elements or watermarks.
+4. Follow user notes and confirmed placement plans. When no position is specified, choose the most natural location.`;
 
 /** Detailed style specifications for virtual rooms, following the floor lamp project's STYLE_SPECS approach. */
 export const VIRTUAL_ROOM_STYLE_SPECS: Record<VirtualRoomStyle, string> = {
