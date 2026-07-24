@@ -121,7 +121,7 @@ function readableList(value: unknown, fallback: string[]): string[] {
   return result.length ? result : fallback;
 }
 
-export async function generatePlacementImages(
+async function performGeneration(
   roomImage: UploadedImage,
   sofaImage: UploadedImage,
   productReferenceImage: UploadedImage,
@@ -129,11 +129,12 @@ export async function generatePlacementImages(
   analysis: SceneAnalysis,
   settings: PlacementSettings,
   extraContext: string,
-  extraPrompt: string[]
-): Promise<GeminiImageResponse["images"]> {
+  extraPrompt: string[],
+  additionalSystemPrompt: string = ""
+): Promise<{ images: GeminiImageResponse["images"]; masterImageUrl: string; imageByPerspective: Map<string, string> }> {
   const requestedPerspectives = (["wide", "medium", "close"] as const).filter((perspective) => settings.perspectives.includes(perspective));
   const masterSettings: PlacementSettings = { ...settings, perspectives: requestedPerspectives };
-  const perspectivePrompts = Object.fromEntries([
+  const basePrompts = Object.fromEntries([
     ["wide", buildGenerationPrompt(analysis, masterSettings, "wide", extraContext, extraPrompt)],
     ...requestedPerspectives.filter((perspective) => perspective !== "wide").map((perspective) => [
       perspective,
@@ -150,62 +151,108 @@ export async function generatePlacementImages(
     productReferenceImage,
     analysis,
     settings: masterSettings,
-    systemPrompt: "请生成一张用于派生多个镜头的远景主图。",
-    perspectivePrompts
+    systemPrompt: `${additionalSystemPrompt}请生成一张用于派生多个镜头的远景主图。`,
+    perspectivePrompts: additionalSystemPrompt
+      ? Object.fromEntries(Object.entries(basePrompts).map(([key, prompt]) => [key, `${additionalSystemPrompt}\n\n${prompt}`]))
+      : basePrompts
   });
 
   const masterImageUrl = response.images.find((image) => image.perspective === "wide")?.imageUrl;
   if (!masterImageUrl) throw new Error("未获得远景主图，无法校验镜头结果");
   const imageByPerspective = new Map(response.images.map((image) => [image.perspective, image.imageUrl]));
-  try {
-    await assertDistinctCameraViews(
-      masterImageUrl,
-      requestedPerspectives.filter((perspective) => perspective !== "wide").flatMap((perspective) => {
-        const imageUrl = imageByPerspective.get(perspective);
-        return imageUrl ? [imageUrl] : [];
-      })
-    );
-  } catch (error) {
-    const antiLazyPrompt = "上一轮结果因模型偷懒被系统拒绝：中近景/近景只是远景的裁切、缩放或局部放大，没有真实改变相机机位。请重新生成真实不同机位；禁止返回任何裁切、缩放、局部放大或几乎相同构图。";
-    const retryPerspectivePrompts = Object.fromEntries([
-      ["wide", `${antiLazyPrompt}\n\n${buildGenerationPrompt(analysis, masterSettings, "wide", extraContext, extraPrompt)}`],
-      ...requestedPerspectives.filter((perspective) => perspective !== "wide").map((perspective) => [
-        perspective,
-        `${antiLazyPrompt}\n\n${buildCameraVariationPrompt(analysis, masterSettings, perspective, extraContext, extraPrompt)}`
-      ])
-    ]);
-    const retryResponse = await postGemini<GeminiImageResponse>({
-      mode: "generate",
-      model: settings.model,
-      roomImage,
-      roomReferenceImages,
-      sofaImage,
-      productReferenceImage,
-      analysis,
-      settings: masterSettings,
-      systemPrompt: `${antiLazyPrompt}\n\n请生成一张用于派生多个镜头的远景主图。`,
-      perspectivePrompts: retryPerspectivePrompts
-    });
-    const retryMasterImageUrl = retryResponse.images.find((image) => image.perspective === "wide")?.imageUrl;
-    if (!retryMasterImageUrl) throw new Error("未获得远景主图，无法校验镜头结果");
-    const retryImageByPerspective = new Map(retryResponse.images.map((image) => [image.perspective, image.imageUrl]));
-    await assertDistinctCameraViews(
-      retryMasterImageUrl,
-      requestedPerspectives.filter((perspective) => perspective !== "wide").flatMap((perspective) => {
-        const imageUrl = retryImageByPerspective.get(perspective);
-        return imageUrl ? [imageUrl] : [];
-      })
-    ).catch(() => {
-      throw error instanceof Error
-        ? error
-        : new Error("镜头变化不足，已拦截本次结果。请重新生成，系统不会把裁切或缩放当作不同视角。");
-    });
-    return requestedPerspectives
-      .map((perspective) => ({ perspective, title: perspectiveLabels[perspective], imageUrl: retryImageByPerspective.get(perspective) }))
-      .filter((image): image is { perspective: PlacementSettings["perspectives"][number]; title: string; imageUrl: string } => Boolean(image.imageUrl));
+
+  await assertDistinctCameraViews(
+    masterImageUrl,
+    requestedPerspectives.filter((perspective) => perspective !== "wide").flatMap((perspective) => {
+      const imageUrl = imageByPerspective.get(perspective);
+      return imageUrl ? [imageUrl] : [];
+    })
+  );
+
+  return { images: response.images, masterImageUrl, imageByPerspective };
+}
+
+export async function generatePlacementImages(
+  roomImage: UploadedImage,
+  sofaImage: UploadedImage,
+  productReferenceImage: UploadedImage,
+  roomReferenceImages: UploadedImage[],
+  analysis: SceneAnalysis,
+  settings: PlacementSettings,
+  extraContext: string,
+  extraPrompt: string[]
+): Promise<GeminiImageResponse["images"]> {
+  const requestedPerspectives = (["wide", "medium", "close"] as const).filter((perspective) => settings.perspectives.includes(perspective));
+
+  let result: { images: GeminiImageResponse["images"]; masterImageUrl: string; imageByPerspective: Map<string, string> };
+  let retryCount = 0;
+  const maxRetries = 2;
+  let additionalPrompt = "";
+
+  while (retryCount <= maxRetries) {
+    try {
+      result = await performGeneration(
+        roomImage,
+        sofaImage,
+        productReferenceImage,
+        roomReferenceImages,
+        analysis,
+        settings,
+        extraContext,
+        extraPrompt,
+        additionalPrompt
+      );
+
+      const qualityResults = await Promise.all(
+        requestedPerspectives.map((perspective) => {
+          const imageUrl = result.imageByPerspective.get(perspective);
+          if (!imageUrl) return { passed: false };
+          return checkGeneratedPlacement(
+            roomImage,
+            productReferenceImage,
+            [],
+            imageUrl,
+            analysis,
+            settings,
+            extraContext,
+            extraPrompt
+          );
+        })
+      );
+
+      const failedPerspectives = requestedPerspectives.filter((_, index) => !qualityResults[index].passed);
+      if (failedPerspectives.length === 0) {
+        break;
+      }
+
+      if (retryCount >= maxRetries) {
+        const issues = failedPerspectives.flatMap((perspective, index) =>
+          qualityResults[index].issues ? [`${perspective}: ${qualityResults[index].issues.join("；")}`] : []
+        );
+        throw new Error(`生成质量检查未通过：${issues.join("；")}`);
+      }
+
+      const correctionPrompts = failedPerspectives.flatMap((perspective, index) =>
+        qualityResults[index].correctionPrompt ? [qualityResults[index].correctionPrompt] : []
+      );
+      additionalPrompt = `【上一轮生成质量检查失败，必须修正以下问题】\n${correctionPrompts.join("\n")}\n\n请严格按照产品参考图重新生成，确保沙发款式、颜色、材质、细节完全一致。`;
+      retryCount++;
+    } catch (error) {
+      if (retryCount >= maxRetries) {
+        throw error instanceof Error ? error : new Error("生成失败");
+      }
+
+      if (error instanceof Error && error.message.includes("镜头变化不足")) {
+        additionalPrompt = "上一轮结果因模型偷懒被系统拒绝：中近景/近景只是远景的裁切、缩放或局部放大，没有真实改变相机机位。请重新生成真实不同机位；禁止返回任何裁切、缩放、局部放大或几乎相同构图。";
+      } else {
+        additionalPrompt = "上一轮生成结果不符合要求，请重新生成。";
+      }
+      retryCount++;
+    }
   }
+
   return requestedPerspectives
-    .map((perspective) => ({ perspective, title: perspectiveLabels[perspective], imageUrl: imageByPerspective.get(perspective) }))
+    .map((perspective) => ({ perspective, title: perspectiveLabels[perspective], imageUrl: result.imageByPerspective.get(perspective) }))
     .filter((image): image is { perspective: PlacementSettings["perspectives"][number]; title: string; imageUrl: string } => Boolean(image.imageUrl));
 }
 
