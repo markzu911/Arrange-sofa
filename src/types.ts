@@ -61,6 +61,10 @@ export interface SceneAnalysis {
 }
 
 export interface SofaIdentity {
+  /** Comprehensive product structure description — positive + negative identification.
+   *  Follows the floor lamp project's `structure` approach: a single sentence that
+   *  describes ALL physical components AND explicitly states what is NOT present. */
+  structure: string;
   seatCount: string;
   silhouette: string;
   armrest: string;

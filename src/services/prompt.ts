@@ -26,19 +26,20 @@ function buildHumanModelPrompt(settings: PlacementSettings): string {
   return `5. PERSONA / HUMAN PRESENCE: Include ${genderLabel}, ${ageLabel} sitting naturally on the target sofa. Clothing and posture must match the room's style. The model must NOT obscure the sofa's key details — armrest, backrest, cushion, material, and silhouette must remain clearly visible. 必须包含一个自然坐在沙发上的${ageLabel}${genderLabel}，但不遮挡沙发主体特征。`;
 }
 
-/** Build product identity prompt — bilingual, referencing analysis results as textual anchor.
- *  Following the floor lamp project's approach: forceful bilingual constraints that reference
- *  the specific sofaIdentity analysis to create a textual anchor for Gemini to verify against. */
+/** Build product identity prompt — following the floor lamp project's approach exactly:
+ *  Use the `structure` field as the PRIMARY textual anchor, which contains both
+ *  positive identification (what IS present) AND negative exclusion (what is NOT present).
+ *  This is how the floor lamp project uses `lampAnalysis.structure`. */
 export function buildProductIdentityPrompt(analysis: SceneAnalysis): string {
   const identity = analysis.sofaIdentity;
-  const structureSummary = `${identity.silhouette}，${identity.armrest}，${identity.backrest}，${identity.cushions}，${identity.material}${identity.color}，${identity.seatCount}`;
+  const structureAnchor = identity.structure || "以参考图为准";
 
   return `HIGHEST PRIORITY CONSTRAINTS (MUST BE STRICTLY FOLLOWED):
 
 1. NO UNREQUESTED OR HALLUCINATED SOFA PARTS (严禁出现沙发原本没有的任何部件 - 绝对精细100%还原):
-   You MUST reproduce ONLY the exact physical parts visible in the reference sofa image (IMAGE 2) and described in the sofa analysis: ${structureSummary}。
+   You MUST reproduce ONLY the exact physical parts visible in the reference sofa image (IMAGE 2) and described in the sofa analysis structure: ${structureAnchor}
    STRICTLY FORBIDDEN: Do NOT add buttons, stitching patterns, trim, extra cushions, decorative pillows, structural changes, or any detail NOT visible in IMAGE 2. Any added detail is a CRITICAL FAILURE.
-   IF the reference sofa has no visible tufting/buckle patterns, DO NOT add tufting. IF it has no visible metal legs, DO NOT add metal legs. 严禁增加任何参考图中不存在的设计元素！
+   严禁增加任何参考图中不存在的设计元素！
 
 2. ABSOLUTE SOFA FAITHFULNESS & STRUCTURAL INTEGRITY (100%还原沙发整体结构与颜色):
    You MUST completely and exactly reproduce the sofa's original appearance, colors, materials, structure, and shape from IMAGE 2. 严禁任何视觉偏差！
@@ -54,7 +55,7 @@ ${JSON.stringify(identity, null, 2)}`;
 }
 
 /** Camera instructions for each perspective — following floor lamp project's approach:
- *  - wide: LOCALIZED corner view (NOT full room), product centered — similar to floor lamp's "far" view
+ *  - wide: LOCALIZED corner view (NOT full room), product centered
  *  - medium: product dominates frame, only immediate context visible
  *  - close: macro product detail shot, fundamentally different from spatial views */
 const CAMERA_INSTRUCTIONS: Record<string, { guidance: string; perspective: string }> = {
@@ -84,8 +85,8 @@ const CAMERA_INSTRUCTIONS: Record<string, { guidance: string; perspective: strin
 };
 
 /** Build the main generation prompt for real-room placement mode.
- *  Following the floor lamp project's structure: bilingual constraints, analysis results embedded,
- *  explicit textual anchoring to analysis, clear numbered sections. */
+ *  Following the floor lamp project's structure: bilingual constraints, `structure` textual anchor,
+ *  NO room analysis JSON block (Gemini can see the room image), NO placement JSON block. */
 export function buildGenerationPrompt(
   analysis: SceneAnalysis,
   settings: PlacementSettings,
@@ -96,35 +97,19 @@ export function buildGenerationPrompt(
   const camera = CAMERA_INSTRUCTIONS[perspective] || CAMERA_INSTRUCTIONS.medium;
   const positionLabel = "未指定位置：请根据房间尺度和动线自动选择最自然的位置与朝向。";
 
-  const roomAnalysisStr = JSON.stringify({
-    roomSummary: analysis.roomSummary,
-    lighting: analysis.lighting,
-    perspective: analysis.perspective,
-    constraints: analysis.constraints
-  }, null, 2);
-
   return [
     `A professional, ultra-high-resolution interior design photograph.
 Your task is to naturally place the target sofa into the room and generate a photorealistic interior photograph.`,
-
-    `ROOM ANALYSIS RESULTS (context for the room environment):
-${roomAnalysisStr}`,
-
     buildProductIdentityPrompt(analysis),
-
     `=== PLACEMENT ===
 Position: ${positionLabel}
-Plan: ${JSON.stringify(analysis.placementPlan)}`,
-
+Advice: ${analysis.placementAdvice}`,
     camera.guidance,
     camera.perspective,
-
     perspective === "close"
       ? `6. FOCUS & DEPTH OF FIELD (对焦与视觉质感): FOR CLOSE-UP VIEW (近景特写): The sofa's texture, stitching, and material grain must be in crisp, razor-sharp focus in the foreground, with the authentic partial room background softly rendering behind it with natural close-up macro photography depth. 近景特写：沙发材质纹理必须锐利清晰，背景自然柔焦。`
       : `6. FOCUS & DEPTH OF FIELD (对焦与视觉质感): You MUST keep the ENTIRE photograph (sofa, background wall, adjacent furniture, floor) completely sharp and clear in deep focus. DO NOT apply unnatural bokeh blur. 全景深清晰对焦，不要虚化背景。`,
-
     buildHumanModelPrompt(settings),
-
     settings.notes
       ? `=== USER REQUIREMENTS (最高优先级) ===\n${settings.notes}`
       : "",
@@ -163,7 +148,8 @@ Your task is to generate a virtual room and place the target sofa into it.`,
       ? `6. FOCUS: Sharp focus on sofa texture and material in foreground. 近景锐利对焦。`
       : `6. FOCUS: Entire photograph in deep focus. 全景深清晰对焦。`,
     buildHumanModelPrompt(settings),
-    `=== PLACEMENT ===\n${JSON.stringify(analysis.placementPlan)}`,
+    `=== PLACEMENT ===
+${analysis.placementAdvice}`,
     settings.notes
       ? `=== USER REQUIREMENTS ===\n${settings.notes}`
       : "",
@@ -174,8 +160,10 @@ Your task is to generate a virtual room and place the target sofa into it.`,
     .join("\n\n");
 }
 
-/** Build analysis prompt — following the floor lamp project's approach: demand exhaustive
- *  component analysis with Chinese descriptions. No text-based image order declaration. */
+/** Build analysis prompt — following the floor lamp project's approach:
+ *  Demand exhaustive component analysis with Chinese descriptions.
+ *  CRITICAL: The `structure` field is the PRIMARY textual anchor for product fidelity.
+ *  It must contain BOTH positive identification AND negative exclusion. */
 export function buildAnalysisPrompt(
   extraContext = "",
   extraPrompt: string[] = [],
@@ -185,20 +173,21 @@ export function buildAnalysisPrompt(
     "You are an expert interior design and product analysis assistant. VERY IMPORTANT: You MUST reply in Chinese (简体中文) for all string values.",
     "CRITICAL INSTRUCTIONS FOR FULL SOFA COMPONENT ANALYSIS (全部件无遗漏全面细节深度解析):",
     "You MUST inspect and describe EVERY SINGLE visible physical component of the sofa in IMAGE 2 with maximum detail and precision. Do NOT omit anything:",
+    "0. 整体结构描述 (structure) — MOST IMPORTANT: A comprehensive Chinese sentence describing ALL physical components from top to bottom, AND explicitly stating what is NOT present. Format: '包含：[all visible parts described in order]. 严禁增加：[elements NOT in the reference, e.g. 拉扣/铆钉、金属腿、额外抱枕、L型转角、任何参考图中不存在的设计元素].'",
     "1. 座位数量 (seatCount): Exact number of seat positions. Must be a specific number, e.g. '三人位' or '两人位'.",
     "2. 整体轮廓 (silhouette): Detailed description of overall shape — is it L-shaped, straight, curved? Low-profile or high-back? Compact or generous?",
-    "3. 扶手 (armrest): Shape (rounded, square, tapered, roll-arm), height relative to seat, material visible on armrest.",
+    "3. 扶手 (armrest): Shape (rounded, square, tapered, roll-arm), height relative to seat, material visible on armrest. IF no visible armrest, state '无明显扶手'.",
     "4. 靠背 (backrest): Height (low/medium/high), shape (straight, curved, wingback), material and texture visible.",
     "5. 坐垫 (cushions): Number of individual cushions, partition pattern (visible seams between cushions), firmness impression.",
     "6. 主材质 (material): Exact material name — e.g. 棉麻混纺, 纳帕牛皮, 科技布, 绒布. NOT generic terms like '布艺'.",
     "7. 主色调 (color): Precise color description — e.g. 深灰色, 米白色, 暖棕色, 墨绿色. NOT generic terms like '灰色'.",
-    "8. 全部可见细节 (details): Exhaustive list of ALL visible details — stitching patterns, tufting/buckle, sofa legs (material & shape), decorative piping, visible zippers, buttons, embroidery, metal accents, etc.",
+    "8. 全部可见细节 (details): Exhaustive list of ALL visible details — stitching patterns, tufting/buckle (IF present; state '无拉扣设计' if NOT), sofa legs (material & shape; state '无可见沙发脚' if hidden), decorative piping, visible zippers, buttons, embroidery, metal accents, etc. EXPLICITLY state what is NOT present!",
     "",
     "Your PRIMARY task is to accurately identify and describe the sofa in IMAGE 2. Room analysis is secondary context.",
     "Return strict JSON matching this schema (no Markdown code blocks):",
     "roomSummary: brief room description in Chinese",
     "sofaSummary: detailed sofa appearance description in Chinese",
-    "sofaIdentity: { seatCount, silhouette, armrest, backrest, cushions, material, color, details[] } — ALL fields must be PRECISE, SPECIFIC, and in Chinese. NO generic defaults like '以参考图为准'.",
+    "sofaIdentity: { structure, seatCount, silhouette, armrest, backrest, cushions, material, color, details[] } — ALL fields must be PRECISE, SPECIFIC, and in Chinese. The `structure` field is the MOST IMPORTANT and must contain BOTH positive description AND negative exclusion. NO generic defaults like '以参考图为准'.",
     "lighting: main light direction in Chinese",
     "perspective: room depth description in Chinese",
     "placementAdvice: best placement suggestion in Chinese",

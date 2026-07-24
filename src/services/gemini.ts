@@ -54,6 +54,7 @@ function normalizeSofaIdentity(value: unknown, fallback: unknown) {
   const source = value && typeof value === "object" ? value as Record<string, unknown> : {};
   const summary = readableText(fallback, "目标沙发参考图中的产品主体");
   return {
+    structure: readableText(source.structure, summary),
     seatCount: readableText(source.seatCount, "以参考图为准"),
     silhouette: readableText(source.silhouette, summary),
     armrest: readableText(source.armrest, "以参考图为准"),

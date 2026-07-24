@@ -63,7 +63,7 @@ function createManualAnalysis(): SceneAnalysis {
   return {
     roomSummary: "AI 解析暂不可用，请根据房间实际情况补充要求。",
     sofaSummary: "请确认目标沙发的款式、颜色、材质和整体轮廓。",
-    sofaIdentity: { seatCount: "以参考图为准", silhouette: "以参考图为准", armrest: "以参考图为准", backrest: "以参考图为准", cushions: "以参考图为准", material: "以参考图为准", color: "以参考图为准", details: [] },
+    sofaIdentity: { structure: "以参考图为准", seatCount: "以参考图为准", silhouette: "以参考图为准", armrest: "以参考图为准", backrest: "以参考图为准", cushions: "以参考图为准", material: "以参考图为准", color: "以参考图为准", details: [] },
     lighting: "请保留原房间的主要光源方向，并生成自然接地阴影。",
     perspective: "请保持房间透视关系与主要通道完整。",
     placementAdvice: "请在下方填写希望保留或替换的家具、沙发朝向和通道要求。",
@@ -88,6 +88,7 @@ function createVirtualRoomAnalysis(styleLabel: string): SceneAnalysis {
     roomSummary: `跳过上传房间，将由 AI 生成 ${styleLabel} 虚拟别墅客厅。`,
     sofaSummary: "以用户上传的沙发图片作为唯一产品参考，生成沙发与虚拟客厅融合的结果图。",
     sofaIdentity: {
+      structure: "以沙发参考图的整体结构为准，严禁增加任何参考图中不存在的设计元素",
       seatCount: "以沙发参考图为准",
       silhouette: "以沙发参考图的整体轮廓和比例为准",
       armrest: "以沙发参考图为准",
@@ -303,12 +304,14 @@ export function VillaSofaPlacementTool() {
     setError("");
     setStatus("正在压缩图片...");
     try {
-      const image = await compressImage(
-        file,
-        undefined,
-        undefined,
-        GEMINI_IMAGE_TARGET_BYTES
-      );
+      // CRITICAL: Send higher-quality reference for the sofa product image.
+    // The floor lamp project doesn't compress images — Gemini needs full detail
+    // (fabric texture, stitching, color accuracy) to faithfully replicate the product.
+    const maxEdge = kind === "sofa" ? 1600 : undefined;
+    const quality = kind === "sofa" ? 0.86 : undefined;
+    const targetBytes = kind === "sofa" ? 800 * 1024 : GEMINI_IMAGE_TARGET_BYTES;
+
+    const image = await compressImage(file, maxEdge, quality, targetBytes);
       setResults([]);
       if (kind === "room") {
         setUseVirtualRoom(false);

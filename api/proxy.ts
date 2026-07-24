@@ -569,6 +569,7 @@ function normalizeSofaIdentity(value: unknown, fallback: unknown) {
   const source = value && typeof value === "object" ? value as Record<string, unknown> : {};
   const summary = toReadableText(fallback, "目标沙发参考图中的产品主体");
   return {
+    structure: toReadableText(source.structure, summary),
     seatCount: toReadableText(source.seatCount, "以参考图为准"),
     silhouette: toReadableText(source.silhouette, summary),
     armrest: toReadableText(source.armrest, "以参考图为准"),
@@ -656,6 +657,7 @@ const ANALYZE_SCHEMA = {
     sofaIdentity: {
       type: Type.OBJECT,
       properties: {
+        structure: { type: Type.STRING, description: "整体结构完整描述（正面+负面排除）：从上到下、从外到内逐一描述所有可见物理部件，并明确声明参考图中不存在的设计元素。格式如：'包含：低矮紧凑型直排轮廓、方形低矮扶手、中等高度平直靠背、三坐垫分区缝线、深灰色纳帕牛皮面、黑色圆柱形沙发脚。严禁增加：拉扣/铆钉、金属腿、额外抱枕、L型转角、任何参考图中不存在的设计元素。'" },
         seatCount: { type: Type.STRING, description: "座位数量，如'三人位'、'两人位'，必须是具体数字" },
         silhouette: { type: Type.STRING, description: "沙发整体轮廓的详细中文描述，包括线条、体量、高低形态" },
         armrest: { type: Type.STRING, description: "扶手形状、高度、材质的详细中文描述" },
@@ -702,9 +704,9 @@ function mapModel(model?: string, mode?: string): string {
     return process.env.GEMINI_ANALYZE_MODEL || "gemini-2.5-flash";
   }
 
-  // P2 fix: default to lite model matching the floor lamp project
+  // Use the full model (not lite) for complex product fidelity — sofa is harder than a lamp
   if (model === "gemini-3") {
-    return process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-lite-image";
+    return process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-image";
   }
 
   return process.env.GEMINI_IMAGE_MODEL || "gemini-2.5-flash-image";

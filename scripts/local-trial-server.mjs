@@ -438,6 +438,22 @@ function createMockResponse(body) {
   };
 }
 
+function normalizeSofaIdentity(value, fallback) {
+  const source = value && typeof value === "object" ? value : {};
+  const summary = toReadableText(fallback, "目标沙发参考图中的产品主体");
+  return {
+    structure: toReadableText(source.structure, summary),
+    seatCount: toReadableText(source.seatCount, "以参考图为准"),
+    silhouette: toReadableText(source.silhouette, summary),
+    armrest: toReadableText(source.armrest, "以参考图为准"),
+    backrest: toReadableText(source.backrest, "以参考图为准"),
+    cushions: toReadableText(source.cushions, "以参考图为准"),
+    material: toReadableText(source.material, "以参考图为准"),
+    color: toReadableText(source.color, "以参考图为准"),
+    details: toReadableList(source.details, ["以参考图可见细节为准"])
+  };
+}
+
 function parseAnalysis(data) {
   const text = extractText(data);
   try {
@@ -445,6 +461,7 @@ function parseAnalysis(data) {
     return {
       roomSummary: toReadableText(parsed.roomSummary, "已识别房间空间与地面关系。"),
       sofaSummary: toReadableText(parsed.sofaSummary, "已识别沙发主体、材质和外观。"),
+      sofaIdentity: normalizeSofaIdentity(parsed.sofaIdentity, parsed.sofaSummary),
       lighting: toReadableText(parsed.lighting, "已判断主要光线方向。"),
       perspective: toReadableText(parsed.perspective, "已判断房间透视。"),
       placementAdvice: toReadableText(parsed.placementAdvice, "建议按空间动线自然摆放。"),
@@ -455,6 +472,7 @@ function parseAnalysis(data) {
     return {
       roomSummary: text || "已识别房间空间与地面关系。",
       sofaSummary: "已识别沙发主体、材质和外观。",
+      sofaIdentity: normalizeSofaIdentity(null, null),
       lighting: "已判断主要光线方向。",
       perspective: "已判断房间透视。",
       placementAdvice: "建议按空间动线自然摆放。",
@@ -609,14 +627,15 @@ const ANALYZE_SCHEMA = {
     sofaIdentity: {
       type: Type.OBJECT,
       properties: {
-        seatCount: { type: Type.STRING, description: "座位数量" },
-        silhouette: { type: Type.STRING, description: "沙发整体轮廓" },
-        armrest: { type: Type.STRING, description: "扶手形状" },
-        backrest: { type: Type.STRING, description: "靠背形态" },
-        cushions: { type: Type.STRING, description: "坐垫分区" },
-        material: { type: Type.STRING, description: "主材质" },
-        color: { type: Type.STRING, description: "主色调" },
-        details: { type: Type.ARRAY, items: { type: Type.STRING }, description: "可见细节列表" }
+        structure: { type: Type.STRING, description: "整体结构完整描述（正面+负面排除）：从上到下、从外到内逐一描述所有可见物理部件，并明确声明参考图中不存在的设计元素。格式如：'包含：低矮紧凑型直排轮廓、方形低矮扶手、中等高度平直靠背、三坐垫分区缝线、深灰色纳帕牛皮面、黑色圆柱形沙发脚。严禁增加：拉扣/铆钉、金属腿、额外抱枕、L型转角、任何参考图中不存在的设计元素。'" },
+        seatCount: { type: Type.STRING, description: "座位数量，如'三人位'、'两人位'，必须是具体数字" },
+        silhouette: { type: Type.STRING, description: "沙发整体轮廓的详细中文描述，包括线条、体量、高低形态" },
+        armrest: { type: Type.STRING, description: "扶手形状、高度、材质的详细中文描述" },
+        backrest: { type: Type.STRING, description: "靠背高度、形态、材质的详细中文描述" },
+        cushions: { type: Type.STRING, description: "坐垫数量、分区方式、缝线图案的详细中文描述" },
+        material: { type: Type.STRING, description: "主材质的中文名称，如'棉麻混纺'、'纳帕牛皮'、'科技布'" },
+        color: { type: Type.STRING, description: "主色调的中文精确描述，如'深灰色'、'米白色'、'暖棕色'" },
+        details: { type: Type.ARRAY, items: { type: Type.STRING }, description: "所有可见细节的中文列表，如拉扣、刺绣、沙发脚、缝线、抱枕等" }
       },
       required: ["seatCount", "silhouette", "armrest", "backrest", "cushions", "material", "color", "details"]
     },
@@ -789,8 +808,9 @@ function mapModel(model, mode) {
     return process.env.GEMINI_ANALYZE_MODEL || "gemini-2.5-flash";
   }
 
+  // Use the full model (not lite) for complex product fidelity — sofa is harder than a lamp
   if (model === "gemini-3") {
-    return process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-lite-image";
+    return process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-image";
   }
 
   return process.env.GEMINI_IMAGE_MODEL || "gemini-2.5-flash-image";
