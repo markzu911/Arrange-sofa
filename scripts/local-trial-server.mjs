@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { existsSync, readFileSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
+import { GoogleGenAI, Type } from "@google/genai";
 
 const root = normalize(join(fileURLToPath(import.meta.url), "..", ".."));
 const distDir = join(root, "dist");
@@ -111,91 +112,50 @@ async function handleGemini(req, res) {
     return;
   }
 
+  const client = new GoogleGenAI({ apiKey, httpOptions: { headers: { "User-Agent": "aistudio-build" } } });
   const model = mapModel(body.model, body.mode);
 
-  // Interleaved labels + images first, prompt at end (same approach as generate mode)
-  const parts = [];
-  let refLabelAdded = false;
-
-  if (body.roomImage?.base64) {
-    parts.push({ text: "IMAGE 1 [REFERENCE ROOM ENVIRONMENT]:" });
-    parts.push({ inlineData: { mimeType: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 } });
-  }
-
-  for (const image of body.roomReferenceImages || []) {
-    if (image.base64) {
-      if (!refLabelAdded) {
-        parts.push({ text: `IMAGE 1 SUPPLEMENTARY — ${body.roomReferenceImages.length} additional room angle(s) from the same space:` });
-        refLabelAdded = true;
-      }
-      parts.push({ inlineData: { mimeType: image.mimeType || "image/jpeg", data: image.base64 } });
-    }
-  }
-
-  if (body.sofaImage?.base64) {
-    parts.push({ text: "IMAGE 2 [EXACT REFERENCE SOFA PRODUCT — THIS IS THE PRODUCT TO IDENTIFY AND REPLICATE]:" });
-    parts.push({ inlineData: { mimeType: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 } });
-  }
-
-  if (body.productReferenceImage?.base64) {
-    parts.push({ text: "IMAGE 3 [PRODUCT IDENTITY REFERENCE]:" });
-    parts.push({ inlineData: { mimeType: body.productReferenceImage.mimeType || "image/jpeg", data: body.productReferenceImage.base64 } });
-  }
-
-  if (body.resultImage?.base64) {
-    parts.push({ text: "IMAGE 4 [GENERATED RESULT TO EVALUATE]:" });
-    parts.push({ inlineData: { mimeType: body.resultImage.mimeType || "image/jpeg", data: body.resultImage.base64 } });
-  }
-
-  // Prompt at the end
-  parts.push({ text: body.systemPrompt || "" });
-
   if (body.mode === "generate") {
-    const images = await generateImagesWithInteractions(body, apiKey, model);
-    sendJson(res, 200, images.length ? { success: true, images } : createMockResponse(body));
+    const requested = body.settings?.perspectives?.length ? body.settings.perspectives : ["medium"];
+    const results = await Promise.all(requested.map(async (perspective) => {
+      const perspectiveBody = { ...body, settings: { ...body.settings, perspectives: [perspective] } };
+      const image = await generateImageWithSDK(client, perspectiveBody, model, perspective);
+      if (!image) throw new Error(`Gemini 未返回可用的${perspective}视角图片`);
+      const title = perspective === "wide" ? "远景（房间全景）" : perspective === "medium" ? "中近景（沙发主体）" : "近景（产品细节）";
+      return { perspective, title, imageUrl: `data:${image.mimeType};base64,${image.data}` };
+    }));
+    sendJson(res, 200, results.length ? { success: true, images: results } : createMockResponse(body));
+    return;
+  }
+
+  // For analyze/quality/cutout/erase — build interleaved parts
+  const parts = buildInterleavedParts(body);
+
+  if (body.mode === "analyze") {
+    const result = await callGenerateContentSDK(client, model, parts, {
+      temperature: 0.2,
+      responseMimeType: "application/json",
+      responseSchema: ANALYZE_SCHEMA
+    });
+    sendJson(res, 200, { success: true, analysis: parseAnalysis(result) });
+    return;
+  }
+
+  if (body.mode === "quality") {
+    const result = await callGenerateContentSDK(client, model, parts, { temperature: 0.2, responseMimeType: "application/json" });
+    sendJson(res, 200, { success: true, quality: parseQuality(result) });
     return;
   }
 
   if (body.mode === "cutout" || body.mode === "erase") {
-    const { response, raw } = await requestImageWithFallback(body, apiKey, model, "wide");
-    if (!response.ok) throw toGeminiUpstreamError(response.status, raw, body.mode === "erase" ? "原场景清场失败" : "沙发前景提取失败");
-    const image = extractInteractionImage(JSON.parse(raw));
+    const image = await generateImageWithSDK(client, body, model, "wide");
     if (!image) throw new Error(body.mode === "erase" ? "Gemini 未返回可用的干净场景图" : "Gemini 未返回可用的沙发前景图");
     sendJson(res, 200, { success: true, images: [{ perspective: "wide", title: body.mode === "erase" ? "干净场景" : "沙发前景", imageUrl: `data:${image.mimeType};base64,${image.data}` }] });
     return;
   }
 
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ role: "user", parts }],
-        generationConfig: { temperature: 0.2, responseMimeType: "application/json" }
-      })
-    }
-  );
-
-  const raw = await response.text();
-  if (!response.ok) {
-    sendJson(res, response.status, {
-      success: false,
-      message: parseGeminiError(raw) || "Gemini 请求失败"
-    });
-    return;
-  }
-
-  const data = JSON.parse(raw);
-  if (body.mode === "analyze") {
-    sendJson(res, 200, { success: true, analysis: parseAnalysis(data) });
-    return;
-  }
-
-  if (body.mode === "quality") {
-    sendJson(res, 200, { success: true, quality: parseQuality(data) });
-    return;
-  }
+  sendJson(res, 200, { success: false, message: "未知操作模式" });
+}
 
   sendJson(res, 200, parseGeneratedImages(data, body));
 }
@@ -638,6 +598,190 @@ function extractText(data) {
     .filter(Boolean)
     .join("\n")
     .trim();
+}
+
+/** Response schema for analyze mode — forces Gemini to return detailed, structured output. */
+const ANALYZE_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    roomSummary: { type: Type.STRING, description: "房间空间与地面关系的详细中文描述" },
+    sofaSummary: { type: Type.STRING, description: "沙发外观的详细中文描述" },
+    sofaIdentity: {
+      type: Type.OBJECT,
+      properties: {
+        seatCount: { type: Type.STRING, description: "座位数量" },
+        silhouette: { type: Type.STRING, description: "沙发整体轮廓" },
+        armrest: { type: Type.STRING, description: "扶手形状" },
+        backrest: { type: Type.STRING, description: "靠背形态" },
+        cushions: { type: Type.STRING, description: "坐垫分区" },
+        material: { type: Type.STRING, description: "主材质" },
+        color: { type: Type.STRING, description: "主色调" },
+        details: { type: Type.ARRAY, items: { type: Type.STRING }, description: "可见细节列表" }
+      },
+      required: ["seatCount", "silhouette", "armrest", "backrest", "cushions", "material", "color", "details"]
+    },
+    lighting: { type: Type.STRING },
+    perspective: { type: Type.STRING },
+    placementAdvice: { type: Type.STRING },
+    constraints: { type: Type.ARRAY, items: { type: Type.STRING } },
+    placementPlan: {
+      type: Type.OBJECT,
+      properties: {
+        summary: { type: Type.STRING }, placement: { type: Type.STRING }, facing: { type: Type.STRING },
+        scale: { type: Type.STRING }, preserve: { type: Type.ARRAY, items: { type: Type.STRING } },
+        remove: { type: Type.ARRAY, items: { type: Type.STRING } }, avoid: { type: Type.ARRAY, items: { type: Type.STRING } },
+        rationale: { type: Type.ARRAY, items: { type: Type.STRING } },
+        candidates: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: {
+          id: { type: Type.STRING }, label: { type: Type.STRING }, placement: { type: Type.STRING },
+          facing: { type: Type.STRING }, scale: { type: Type.STRING }, score: { type: Type.NUMBER },
+          reasons: { type: Type.ARRAY, items: { type: Type.STRING } },
+          blocksWalkway: { type: Type.BOOLEAN }, conflictsWithPreservedItems: { type: Type.BOOLEAN },
+          violatesUserRequirements: { type: Type.BOOLEAN }
+        } } },
+        selectedCandidateId: { type: Type.STRING }
+      },
+      required: ["summary", "placement", "facing", "scale", "preserve", "remove", "avoid", "rationale", "candidates", "selectedCandidateId"]
+    }
+  },
+  required: ["roomSummary", "sofaSummary", "sofaIdentity", "lighting", "perspective", "placementAdvice", "constraints", "placementPlan"]
+};
+
+/** Build interleaved parts — images+labels first, prompt last. */
+function buildInterleavedParts(body) {
+  const parts = [];
+
+  if (body.roomImage?.base64) {
+    parts.push({ text: "IMAGE 1 [REFERENCE ROOM ENVIRONMENT]:" });
+    parts.push({ inlineData: { mimeType: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 } });
+  }
+
+  const refs = body.roomReferenceImages || [];
+  if (refs.length > 0) {
+    parts.push({ text: `IMAGE 1 SUPPLEMENTARY — ${refs.length} additional room angle(s) from the same space:` });
+    for (const image of refs) {
+      if (image.base64) parts.push({ inlineData: { mimeType: image.mimeType || "image/jpeg", data: image.base64 } });
+    }
+  }
+
+  if (body.sofaImage?.base64) {
+    parts.push({ text: "IMAGE 2 [EXACT REFERENCE SOFA PRODUCT — THIS IS THE PRODUCT TO IDENTIFY AND REPLICATE]:" });
+    parts.push({ inlineData: { mimeType: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 } });
+  }
+
+  if (body.productReferenceImage?.base64) {
+    parts.push({ text: "IMAGE 3 [PRODUCT IDENTITY REFERENCE]:" });
+    parts.push({ inlineData: { mimeType: body.productReferenceImage.mimeType || "image/jpeg", data: body.productReferenceImage.base64 } });
+  }
+
+  if (body.resultImage?.base64) {
+    parts.push({ text: "IMAGE 4 [GENERATED RESULT TO EVALUATE]:" });
+    parts.push({ inlineData: { mimeType: body.resultImage.mimeType || "image/jpeg", data: body.resultImage.base64 } });
+  }
+
+  parts.push({ text: body.systemPrompt || "" });
+  return parts;
+}
+
+/** Build interleaved parts for image generation — images+labels first, prompt last. */
+function buildGenerationParts(body) {
+  const parts = [];
+
+  if (body.roomImage?.base64) {
+    parts.push({ text: "IMAGE 1 [REFERENCE ROOM ENVIRONMENT]:" });
+    parts.push({ inlineData: { mimeType: body.roomImage.mimeType || "image/jpeg", data: body.roomImage.base64 } });
+  }
+
+  const refs = body.roomReferenceImages || [];
+  if (refs.length > 0) {
+    parts.push({ text: `IMAGE 1 SUPPLEMENTARY — ${refs.length} additional room angle(s):` });
+    for (const image of refs) {
+      if (image.base64) parts.push({ inlineData: { mimeType: image.mimeType || "image/jpeg", data: image.base64 } });
+    }
+  }
+
+  if (body.sofaImage?.base64) {
+    parts.push({ text: "IMAGE 2 [EXACT REFERENCE SOFA PRODUCT — 必须100%按此图还原沙发]:" });
+    parts.push({ inlineData: { mimeType: body.sofaImage.mimeType || "image/jpeg", data: body.sofaImage.base64 } });
+  }
+
+  parts.push({ text: body.systemPrompt || "" });
+  return parts;
+}
+
+/** Call generateContent via @google/genai SDK for text/JSON responses. */
+async function callGenerateContentSDK(client, model, parts, config) {
+  const sdkConfig = {
+    temperature: config.temperature ?? 0.2,
+    responseMimeType: config.responseMimeType ?? "text/plain"
+  };
+  if (config.responseSchema) sdkConfig.responseSchema = config.responseSchema;
+
+  const response = await client.models.generateContent({
+    model,
+    contents: { parts },
+    config: sdkConfig
+  });
+
+  if (!response.candidates?.[0]?.content?.parts) {
+    throw new Error("Gemini 返回了空响应");
+  }
+  return response;
+}
+
+/** Generate images using @google/genai SDK. */
+async function generateImageWithSDK(client, body, model, perspective) {
+  // PRIMARY: generateContent via SDK
+  try {
+    const parts = buildGenerationParts(body);
+    const response = await client.models.generateContent({
+      model,
+      contents: { parts },
+      config: {
+        imageConfig: {
+          aspectRatio: body.settings?.ratio || "16:9"
+        }
+      }
+    });
+    const image = extractSDKImage(response);
+    if (image) return image;
+  } catch (error) {
+    console.warn("[local-trial] generateContent SDK failed", { model, perspective, error: error.message });
+  }
+
+  // FALLBACK: try different model via SDK
+  const fallbackModel = process.env.GEMINI_IMAGE_MODEL_FALLBACK || "gemini-2.5-flash-image";
+  if (fallbackModel !== model) {
+    try {
+      const parts = buildGenerationParts(body);
+      const response = await client.models.generateContent({
+        model: fallbackModel,
+        contents: { parts },
+        config: {
+          imageConfig: {
+            aspectRatio: body.settings?.ratio || "16:9"
+          }
+        }
+      });
+      const image = extractSDKImage(response);
+      if (image) return image;
+    } catch (error) {
+      console.warn("[local-trial] fallback model failed", { fallbackModel, perspective, error: error.message });
+    }
+  }
+
+  throw new ImageGenerationUnavailable();
+}
+
+/** Extract image from SDK generateContent response. */
+function extractSDKImage(response) {
+  const parts = response.candidates?.[0]?.content?.parts;
+  if (!parts) return null;
+  for (const part of parts) {
+    if (part.inlineData?.data) {
+      return { mimeType: part.inlineData.mimeType || "image/png", data: part.inlineData.data };
+    }
+  }
+  return null;
 }
 
 function mapModel(model, mode) {

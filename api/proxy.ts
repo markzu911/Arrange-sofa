@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { GoogleGenAI, type Part } from "@google/genai";
+import { GoogleGenAI, Type, type Part } from "@google/genai";
 
 const SAAS_ORIGIN = process.env.SAAS_API_ORIGIN || "http://aibigtree.com";
 const BODY_LIMIT = 20 * 1024 * 1024;
@@ -109,7 +109,7 @@ async function handleGemini(req: JsonRequest, res: ServerResponse) {
     return;
   }
 
-  const client = new GoogleGenAI({ apiKey });
+  const client = new GoogleGenAI({ apiKey, httpOptions: { headers: { "User-Agent": "aistudio-build" } } });
   const model = mapModel(body.model, body.mode);
 
   if (body.mode === "generate") {
@@ -122,7 +122,11 @@ async function handleGemini(req: JsonRequest, res: ServerResponse) {
   const parts = buildInterleavedParts(body);
 
   if (body.mode === "analyze") {
-    const result = await callGenerateContent(client, model, parts, { temperature: 0.2, responseMimeType: "application/json" });
+    const result = await callGenerateContent(client, model, parts, {
+      temperature: 0.2,
+      responseMimeType: "application/json",
+      responseSchema: ANALYZE_SCHEMA
+    });
     sendJson(res, 200, { success: true, analysis: parseAnalysis(result) });
     return;
   }
@@ -227,15 +231,20 @@ async function callGenerateContent(
   client: GoogleGenAI,
   model: string,
   parts: Part[],
-  config: { temperature?: number; responseMimeType?: string }
+  config: { temperature?: number; responseMimeType?: string; responseSchema?: unknown }
 ): Promise<unknown> {
+  const sdkConfig: Record<string, unknown> = {
+    temperature: config.temperature ?? 0.2,
+    responseMimeType: config.responseMimeType ?? "text/plain"
+  };
+  if (config.responseSchema) {
+    sdkConfig.responseSchema = config.responseSchema;
+  }
+
   const response = await client.models.generateContent({
     model,
     contents: { parts },
-    config: {
-      temperature: config.temperature ?? 0.2,
-      responseMimeType: config.responseMimeType ?? "text/plain"
-    }
+    config: sdkConfig
   });
 
   if (!response.candidates?.[0]?.content?.parts) {
@@ -636,6 +645,57 @@ function extractText(data: unknown): string {
     .join("\n")
     .trim();
 }
+
+/** Response schema for analyze mode — forces Gemini to return detailed, structured output.
+ *  Following the floor lamp project's approach with responseSchema + Type. */
+const ANALYZE_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    roomSummary: { type: Type.STRING, description: "房间空间与地面关系的详细中文描述" },
+    sofaSummary: { type: Type.STRING, description: "沙发外观的详细中文描述（款式、颜色、材质、整体轮廓）" },
+    sofaIdentity: {
+      type: Type.OBJECT,
+      properties: {
+        seatCount: { type: Type.STRING, description: "座位数量，如'三人位'、'两人位'，必须是具体数字" },
+        silhouette: { type: Type.STRING, description: "沙发整体轮廓的详细中文描述，包括线条、体量、高低形态" },
+        armrest: { type: Type.STRING, description: "扶手形状、高度、材质的详细中文描述" },
+        backrest: { type: Type.STRING, description: "靠背高度、形态、材质的详细中文描述" },
+        cushions: { type: Type.STRING, description: "坐垫数量、分区方式、缝线图案的详细中文描述" },
+        material: { type: Type.STRING, description: "主材质的中文名称，如'棉麻混纺'、'纳帕牛皮'、'科技布'" },
+        color: { type: Type.STRING, description: "主色调的中文精确描述，如'深灰色'、'米白色'、'暖棕色'" },
+        details: { type: Type.ARRAY, items: { type: Type.STRING }, description: "所有可见细节的中文列表，如拉扣、刺绣、沙发脚、缝线、抱枕等" }
+      },
+      required: ["seatCount", "silhouette", "armrest", "backrest", "cushions", "material", "color", "details"]
+    },
+    lighting: { type: Type.STRING, description: "主要光线方向的中文描述" },
+    perspective: { type: Type.STRING, description: "房间纵深和透视关系的中文描述" },
+    placementAdvice: { type: Type.STRING, description: "最佳摆放位置的中文建议" },
+    constraints: { type: Type.ARRAY, items: { type: Type.STRING }, description: "约束条件的中文字符串数组" },
+    placementPlan: {
+      type: Type.OBJECT,
+      properties: {
+        summary: { type: Type.STRING },
+        placement: { type: Type.STRING },
+        facing: { type: Type.STRING },
+        scale: { type: Type.STRING },
+        preserve: { type: Type.ARRAY, items: { type: Type.STRING } },
+        remove: { type: Type.ARRAY, items: { type: Type.STRING } },
+        avoid: { type: Type.ARRAY, items: { type: Type.STRING } },
+        rationale: { type: Type.ARRAY, items: { type: Type.STRING } },
+        candidates: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: {
+          id: { type: Type.STRING }, label: { type: Type.STRING }, placement: { type: Type.STRING },
+          facing: { type: Type.STRING }, scale: { type: Type.STRING }, score: { type: Type.NUMBER },
+          reasons: { type: Type.ARRAY, items: { type: Type.STRING } },
+          blocksWalkway: { type: Type.BOOLEAN }, conflictsWithPreservedItems: { type: Type.BOOLEAN },
+          violatesUserRequirements: { type: Type.BOOLEAN }
+        } } },
+        selectedCandidateId: { type: Type.STRING }
+      },
+      required: ["summary", "placement", "facing", "scale", "preserve", "remove", "avoid", "rationale", "candidates", "selectedCandidateId"]
+    }
+  },
+  required: ["roomSummary", "sofaSummary", "sofaIdentity", "lighting", "perspective", "placementAdvice", "constraints", "placementPlan"]
+};
 
 function mapModel(model?: string, mode?: string): string {
   if (mode === "analyze" || mode === "quality") {
